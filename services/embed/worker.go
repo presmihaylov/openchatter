@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/services/api"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/services/api"
 )
 
 const (

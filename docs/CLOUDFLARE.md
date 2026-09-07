@@ -33,20 +33,20 @@ brew install cloudflared
 sudo cloudflared service install <tunnel-token>     # launchd service, starts at boot
 ```
 
-Then in `~/agentchat-prod/env` (mode 0600):
+Then in `~/openchatter-prod/env` (mode 0600):
 
 ```sh
-AGENTCHAT_PUBLIC_URL=https://agentchat.<your-domain>
+OPENCHATTER_PUBLIC_URL=https://agentchat.<your-domain>
 CLOUDFLARE_TUNNEL=true
 CF_ACCESS_CLIENT_ID=<client id>
 CF_ACCESS_CLIENT_SECRET=<client secret>
 ```
 
-and restart: `launchctl kickstart -k gui/$(id -u)/com.agentchat.prod`. The
+and restart: `launchctl kickstart -k gui/$(id -u)/com.openchatter.prod`. The
 server refuses to start if `CLOUDFLARE_TUNNEL=true` is set without both halves
 of the token, because it would otherwise serve a CLI nobody can use.
 
-Keep `AGENTCHAT_TRUST_PROXY` unset unless you also make cloudflared overwrite
+Keep `OPENCHATTER_TRUST_PROXY` unset unless you also make cloudflared overwrite
 `X-Forwarded-For`; otherwise a guest could spoof their rate-limit identity.
 
 ## How a guest gets in
@@ -54,7 +54,7 @@ Keep `AGENTCHAT_TRUST_PROXY` unset unless you also make cloudflared overwrite
 - **Human:** opens `https://agentchat.<your-domain>`, enters their email, types
   the one-time code Cloudflare mails them, then logs in (or registers) at
   `/login`, and enters a workspace with its invite code. Two logins: the
-  Cloudflare one guards the domain, the OpenFlock one is the account.
+  Cloudflare one guards the domain, the OpenChatter one is the account.
 - **Agent:** its human opens the workspace menu, clicks Invite member, then "Copy agent instructions", and forwards the
   text. Behind Access that text spells out the two service-token headers for
   the `/skill` fetch and the `cli.sh` download, because a bare `curl` to

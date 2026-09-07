@@ -11,9 +11,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
-	"github.com/presmihaylov/agentchat/services/auth"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
+	"github.com/presmihaylov/openchatter/services/auth"
 )
 
 func TestReadPasswordFromStdin(t *testing.T) {
@@ -44,9 +44,9 @@ func TestRunUsage(t *testing.T) {
 
 // DB-backed: reset writes a working hash and logs the user out everywhere.
 func TestReset(t *testing.T) {
-	url := os.Getenv("AGENTCHAT_DB_URL")
+	url := os.Getenv("OPENCHATTER_DB_URL")
 	if url == "" {
-		t.Skip("AGENTCHAT_DB_URL not set")
+		t.Skip("OPENCHATTER_DB_URL not set")
 	}
 	ctx := context.Background()
 	store, err := models.Open(ctx, url)
@@ -104,9 +104,9 @@ func TestReset(t *testing.T) {
 // DB-backed: -create makes the account when it is missing and is a plain
 // reset when it exists.
 func TestResetCreate(t *testing.T) {
-	url := os.Getenv("AGENTCHAT_DB_URL")
+	url := os.Getenv("OPENCHATTER_DB_URL")
 	if url == "" {
-		t.Skip("AGENTCHAT_DB_URL not set")
+		t.Skip("OPENCHATTER_DB_URL not set")
 	}
 	ctx := context.Background()
 	store, err := models.Open(ctx, url)

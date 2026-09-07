@@ -1,48 +1,20 @@
 package envx
 
-import (
-	"reflect"
-	"testing"
-)
+import "testing"
 
-func TestGetPrefersTheNewName(t *testing.T) {
-	t.Setenv("OPENFLOCK_DB_URL", "new")
-	t.Setenv("AGENTCHAT_DB_URL", "old")
+func TestGetReadsTheOpenchatterName(t *testing.T) {
+	t.Setenv("OPENCHATTER_DB_URL", "new")
 	if got := Get("DB_URL"); got != "new" {
-		t.Fatalf("Get: %q, want the OPENFLOCK_ value", got)
+		t.Fatalf("Get: %q, want the OPENCHATTER_ value", got)
 	}
 }
 
-func TestGetFallsBackToTheOldName(t *testing.T) {
+// The rename is a hard cut: an AGENTCHAT_ name left in a shell profile must not
+// keep a service alive, or the break nobody sees is the one that bites later.
+func TestGetIgnoresTheOldName(t *testing.T) {
+	t.Setenv("OPENCHATTER_PORT", "")
 	t.Setenv("AGENTCHAT_PORT", "8090")
-	if got := Get("PORT"); got != "8090" {
-		t.Fatalf("Get: %q, want the AGENTCHAT_ value", got)
-	}
-}
-
-// an empty new name must not shadow a set old one, or an OPENFLOCK_X= left in
-// a shell profile silently blanks a working agent's config
-func TestEmptyNewNameFallsBack(t *testing.T) {
-	t.Setenv("OPENFLOCK_PORT", "")
-	t.Setenv("AGENTCHAT_PORT", "8090")
-	if got := Get("PORT"); got != "8090" {
-		t.Fatalf("Get: %q, want the AGENTCHAT_ value", got)
-	}
-}
-
-func TestUnsetIsEmpty(t *testing.T) {
-	if got := Get("NOTHING_SET_ANYWHERE"); got != "" {
-		t.Fatalf("Get: %q", got)
-	}
-}
-
-func TestLegacyInUseNamesOnlyTheUnmigrated(t *testing.T) {
-	env := map[string]string{
-		"OPENFLOCK_DB_URL": "new", "AGENTCHAT_DB_URL": "old",
-		"AGENTCHAT_PORT": "8090",
-	}
-	got := LegacyInUse(func(k string) string { return env[k] }, "DB_URL", "PORT", "PUBLIC_URL")
-	if !reflect.DeepEqual(got, []string{"AGENTCHAT_PORT"}) {
-		t.Fatalf("LegacyInUse: %v", got)
+	if got := Get("PORT"); got != "" {
+		t.Fatalf("Get: %q, want empty: the AGENTCHAT_ name is gone", got)
 	}
 }

@@ -1,6 +1,6 @@
-// Command agentchat-passwd resets a user's password from the server host:
+// Command openchatter-passwd resets a user's password from the server host:
 //
-//	agentchat-passwd [-create] <username>
+//	openchatter-passwd [-create] <username>
 //
 // The new password is read from the terminal (hidden) or, when stdin is not a
 // terminal, from the first line of stdin; it never appears in argv or ps. It
@@ -22,30 +22,30 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/envx"
-	"github.com/presmihaylov/agentchat/services/auth"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/envx"
+	"github.com/presmihaylov/openchatter/services/auth"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "agentchat-passwd:", err)
+		fmt.Fprintln(os.Stderr, "openchatter-passwd:", err)
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	fs := flag.NewFlagSet("agentchat-passwd", flag.ContinueOnError)
+	fs := flag.NewFlagSet("openchatter-passwd", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	create := fs.Bool("create", false, "create the password account when the username is unknown")
-	usage := errors.New("usage: agentchat-passwd [-create] <username>  (password read from stdin)")
+	usage := errors.New("usage: openchatter-passwd [-create] <username>  (password read from stdin)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
 		return usage
 	}
 	username := strings.ToLower(strings.TrimSpace(fs.Arg(0)))
 	dbURL := envx.Get("DB_URL")
 	if dbURL == "" {
-		return errors.New("OPENFLOCK_DB_URL is required")
+		return errors.New("OPENCHATTER_DB_URL is required")
 	}
 	password, err := readPassword(os.Stdin, term.IsTerminal(int(os.Stdin.Fd())))
 	if err != nil {

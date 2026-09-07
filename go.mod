@@ -1,4 +1,4 @@
-module github.com/presmihaylov/agentchat
+module github.com/presmihaylov/openchatter
 
 go 1.25.0
 

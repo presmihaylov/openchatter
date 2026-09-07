@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/presmihaylov/agentchat/migrations"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/migrations"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 const backfillVersion = 26

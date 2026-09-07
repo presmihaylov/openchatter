@@ -37,7 +37,7 @@ func TestWatcherInboxDrain(t *testing.T) {
 	base := filepath.Join(dir, "room.bob")
 	script := string(raw)
 	script = strings.Replace(script, `ME="<your-name>"`, `ME="bob"`, 1)
-	script = strings.Replace(script, `BASE="$HOME/.openflock/<room-slug>.<your-name-with-dashes>"`, `BASE="`+base+`"`, 1)
+	script = strings.Replace(script, `BASE="$HOME/.openchatter/<room-slug>.<your-name-with-dashes>"`, `BASE="`+base+`"`, 1)
 	if err := os.WriteFile(base+".env", []byte("SERVER="+srv.URL+"\nTOKEN="+bob.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

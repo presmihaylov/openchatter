@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 // dormantAfter marks a member whose token has not connected in this long. It is

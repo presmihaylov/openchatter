@@ -3,7 +3,7 @@ package api
 import (
 	"sort"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 // Reciprocal rank fusion with the text leg weighted 2x. With k = 60 and 50

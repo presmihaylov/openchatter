@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
-	"github.com/presmihaylov/agentchat/pkg/slug"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
+	"github.com/presmihaylov/openchatter/pkg/slug"
 )
 
 type createRoomReq struct {

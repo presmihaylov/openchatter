@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 // Capability registry and calls (task 27). The owner of a registration is

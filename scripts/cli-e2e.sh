@@ -347,7 +347,7 @@ curl -fsS "$SERVER/api/v1/participants" -H "Authorization: Bearer $alice" \
 ok "offline, queued mention, online prints it once, stale cursor kept"
 
 # 16. reminders (task 22): bob sets, lists, edits and deletes his own; a fire
-# (backdated through the db when AGENTCHAT_DB_URL and psql are here, else skipped)
+# (backdated through the db when OPENCHATTER_DB_URL and psql are here, else skipped)
 # shows in mentions as a REMINDER line and, while offline, in the online batch.
 out=$("${B[@]}" remind 'check the build' 'in 2h')
 grep -q '^reminder set:' <<<"$out" || fail "remind did not confirm: $out"
@@ -362,9 +362,9 @@ grep -qi 'invalid schedule' <<<"$bad" && ok "bad schedule refused" || fail "bad 
 "${A[@]}" reminders | grep -q 'no reminders' || fail "alice must not see bob's reminders"
 notmine=$("${A[@]}" reminders delete "$rid" 2>&1 || true)
 grep -q 'HTTP 404' <<<"$notmine" || fail "alice deleting bob's reminder should 404: $notmine"
-if command -v psql >/dev/null 2>&1 && [ -n "${AGENTCHAT_DB_URL:-}" ]; then
+if command -v psql >/dev/null 2>&1 && [ -n "${OPENCHATTER_DB_URL:-}" ]; then
   "${B[@]}" mentions --limit 50 >/dev/null
-  psql "$AGENTCHAT_DB_URL" -q -v ON_ERROR_STOP=1 -c "UPDATE reminders SET next_fire_at = now() WHERE id = '$rid'"
+  psql "$OPENCHATTER_DB_URL" -q -v ON_ERROR_STOP=1 -c "UPDATE reminders SET next_fire_at = now() WHERE id = '$rid'"
   fired=""
   for _ in 1 2 3 4 5 6; do
     sleep 3
@@ -377,7 +377,7 @@ if command -v psql >/dev/null 2>&1 && [ -n "${AGENTCHAT_DB_URL:-}" ]; then
   # offline: the fire queues and online prints it
   sid=$("${B[@]}" reminders | grep 'every day' | awk '{print $1}')
   "${B[@]}" offline >/dev/null
-  psql "$AGENTCHAT_DB_URL" -q -v ON_ERROR_STOP=1 -c "UPDATE reminders SET next_fire_at = now() WHERE id = '$sid'"
+  psql "$OPENCHATTER_DB_URL" -q -v ON_ERROR_STOP=1 -c "UPDATE reminders SET next_fire_at = now() WHERE id = '$sid'"
   sleep 8
   "${B[@]}" mentions | grep -q 'nothing new' || fail "offline poll leaked the fire"
   out=$("${B[@]}" online)
@@ -385,7 +385,7 @@ if command -v psql >/dev/null 2>&1 && [ -n "${AGENTCHAT_DB_URL:-}" ]; then
   grep -q 'standup' <<<"$out" || fail "online batch reminder text: $out"
   ok "one-time fires once into mentions, recurring fire waits for online"
 else
-  echo "  skip fire check (needs psql and AGENTCHAT_DB_URL)"
+  echo "  skip fire check (needs psql and OPENCHATTER_DB_URL)"
 fi
 "${B[@]}" reminders delete "$rid" | grep -q "deleted $rid" || fail "reminders delete"
 "${B[@]}" reminders | grep -c 'next ' | grep -qx 1 || fail "one reminder should remain"
@@ -408,48 +408,40 @@ if "${A[@]}" search zebra --has photos >/dev/null 2>&1; then fail "--has photos 
 "${A[@]}" search zebra migration --json | jq_ 'd["results"][0]["via"]' | grep -q '^text$' || fail "text hit should say via=text"
 ok "search: hybrid endpoint, --from/--in/--after/--before/--kind/--has"
 
-# 18. rename compatibility (OpenFlock phase 2, step 1). An agent that has not
-# migrated must keep working, and a migrated one must be found without --env.
+# 18. the OpenChatter hard cut (phase 2, step 2). Only ~/.openchatter is read, only
+# the OPENCHATTER_ variables carry, and the cursor cache is ~/.cache/openchatter.
 FAKE="$WORK/fakehome"
 run_home() { HOME="$FAKE" "$CLI" "$@"; }
 
 mkdir -p "$FAKE/.agentchat"
 cp "$WORK/alice.env" "$FAKE/.agentchat/room.alice.agentchat.env"
-run_home whoami | grep -q '^alice ' || fail "an un-migrated ~/.agentchat must still be found"
-ok "un-migrated client directory still works"
+! run_home whoami >/dev/null 2>&1 || fail "~/.agentchat must no longer be read"
+ok "the old client directory is gone, not a fallback"
 
-# an empty new directory must not hide a working old one: the join docs tell an
-# agent to mkdir ~/.openflock for cli.sh long before it moves its env file over
-mkdir -p "$FAKE/.openflock"
-run_home whoami | grep -q '^alice ' || fail "an empty ~/.openflock must not hide ~/.agentchat"
-ok "an ~/.openflock with no env file does not hide the old directory"
+mkdir -p "$FAKE/.openchatter"
+cp "$WORK/bob.env" "$FAKE/.openchatter/room.bob.env"
+run_home whoami | grep -q '^bob ' || fail "~/.openchatter must be the client directory"
+ok "the client directory is ~/.openchatter and the env file is <room>.<name>.env"
 
-cp "$WORK/bob.env" "$FAKE/.openflock/room.bob.openflock.env"
-run_home whoami | grep -q '^bob ' || fail "~/.openflock must win over ~/.agentchat"
-ok "migrated client directory wins, and the new env-file suffix is found"
-
-# the variables dual-read: the new name wins, the old one still carries. HOME is
-# empty in each, or the directory search would answer and prove nothing.
+# HOME is empty in each variable check, or the directory search would answer
+# and prove nothing
 mkdir -p "$WORK/empty"
-HOME="$WORK/empty" OPENFLOCK_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "OPENFLOCK_ENV ignored"
-HOME="$WORK/empty" AGENTCHAT_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "AGENTCHAT_ENV no longer works"
-HOME="$FAKE" OPENFLOCK_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "OPENFLOCK_ENV must beat the client directory"
-OPENFLOCK_SERVER="$SERVER" OPENFLOCK_TOKEN="$alice" HOME="$WORK/empty" "$CLI" whoami | grep -q '^alice ' || fail "OPENFLOCK_SERVER/TOKEN ignored"
-AGENTCHAT_SERVER="$SERVER" AGENTCHAT_TOKEN="$alice" HOME="$WORK/empty" "$CLI" whoami | grep -q '^alice ' || fail "AGENTCHAT_SERVER/TOKEN no longer work"
-ok "env vars read the OPENFLOCK_ name first and the AGENTCHAT_ one second"
+HOME="$WORK/empty" OPENCHATTER_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "OPENCHATTER_ENV ignored"
+HOME="$FAKE" OPENCHATTER_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "OPENCHATTER_ENV must beat the client directory"
+OPENCHATTER_SERVER="$SERVER" OPENCHATTER_TOKEN="$alice" HOME="$WORK/empty" "$CLI" whoami | grep -q '^alice ' || fail "OPENCHATTER_SERVER/TOKEN ignored"
+! AGENTCHAT_SERVER="$SERVER" AGENTCHAT_TOKEN="$alice" HOME="$WORK/empty" "$CLI" whoami >/dev/null 2>&1 || fail "AGENTCHAT_SERVER/TOKEN must no longer carry"
+ok "only the OPENCHATTER_ variables carry"
 
 # --env alone must work with no HOME at all: a bridge under launchd or in a
 # container has none, and the client directory search must never be reached
 (unset HOME; "$CLI" --env "$WORK/alice.env" whoami) | grep -q '^alice ' || fail "--env must work with no HOME"
 ok "--env works with no HOME set"
 
-# the cursor cache follows the same rule as the client directory
 CACHE_HOME="$WORK/cachehome"
 mkdir -p "$CACHE_HOME/.cache/agentchat"
-HOME="$CACHE_HOME" XDG_CACHE_HOME= "$CLI" --env "$WORK/alice.env" mentions --since 0 >/dev/null || fail "mentions failed under the legacy cache"
-[ -n "$(ls -A "$CACHE_HOME/.cache/agentchat")" ] || fail "an existing ~/.cache/agentchat must keep being used"
-[ ! -d "$CACHE_HOME/.cache/openflock" ] || fail "a legacy cache must not be abandoned for a new one"
-ok "cursor cache stays in ~/.cache/agentchat when that is where it already is"
+HOME="$CACHE_HOME" XDG_CACHE_HOME= "$CLI" --env "$WORK/alice.env" mentions --since 0 >/dev/null || fail "mentions failed"
+[ -d "$CACHE_HOME/.cache/openchatter" ] || fail "the cursor cache must be ~/.cache/openchatter"
+ok "the cursor cache is ~/.cache/openchatter"
 
 # 19. explicit acknowledgements (task 32): an ask addressed to bob is pending
 # until bob acks it by message id, and the check mark rides on the message.

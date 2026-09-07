@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 func TestLoginLimiterWindow(t *testing.T) {

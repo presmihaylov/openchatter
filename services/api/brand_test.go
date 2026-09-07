@@ -9,7 +9,7 @@ import (
 // to route them like /assets, or every tab icon and heading logo 404s
 func TestBrandAssetsServed(t *testing.T) {
 	srv, _ := newTestServer(t)
-	for _, path := range []string{"/brand/favicon-32.png", "/brand/openflock-logo-mark.png", "/favicon.ico"} {
+	for _, path := range []string{"/brand/favicon-32.png", "/brand/openchatter-logo-mark.png", "/favicon.ico"} {
 		resp, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)

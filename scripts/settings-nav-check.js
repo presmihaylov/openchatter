@@ -3,7 +3,7 @@
 // fallbacks (?next=, same-origin referrer, /create; unsafe next ignored), the
 // Continue link after a password change, the pw-banner on a room page sending
 // the user to /settings with a way back, and signed-in visits to /login and
-// /register skipping the form. Needs Postgres for agentchat-passwd.
+// /register skipping the form. Needs Postgres for openchatter-passwd.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/settings-nav-check.js
 const puppeteer = require('puppeteer-core');
 const { execFileSync } = require('child_process');
@@ -12,7 +12,7 @@ const fs = require('fs');
 const { createRoom } = require('./lib/login.js');
 
 const SERVER = process.env.SERVER || 'http://localhost:8095';
-const DB_URL = process.env.AGENTCHAT_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
+const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
 const SHOTS = process.env.SHOTS_DIR || '';
 const REPO = path.resolve(__dirname, '..');
 
@@ -175,8 +175,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // an operator reset: the banner on the room page links to settings with a way back
   const tempPw = 'temporary horse 1';
-  execFileSync('go', ['run', './cmd/agentchat-passwd', user], {
-    cwd: REPO, input: tempPw, env: Object.assign({}, process.env, { AGENTCHAT_DB_URL: DB_URL }), stdio: ['pipe', 'pipe', 'inherit'],
+  execFileSync('go', ['run', './cmd/openchatter-passwd', user], {
+    cwd: REPO, input: tempPw, env: Object.assign({}, process.env, { OPENCHATTER_DB_URL: DB_URL }), stdio: ['pipe', 'pipe', 'inherit'],
   });
   const relogin = await api('/api/v1/auth/password/login', { method: 'POST', body: { username: user, password: tempPw } });
   await page.goto(SERVER + roomPath, { waitUntil: 'networkidle2' });

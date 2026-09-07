@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 // Channel groups are a purely personal sidebar layout: every endpoint here is

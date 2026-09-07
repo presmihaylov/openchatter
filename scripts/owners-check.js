@@ -11,7 +11,7 @@ const puppeteer = require('puppeteer-core');
 const { call, createRoom, registerAndLogin, loginPage, openWorkspace, openSettings, uniqUser } = require('./lib/login.js');
 const SERVER = process.env.SERVER || 'http://localhost:8095';
 const OUT = process.env.OUT || 'tmp';
-const DB_URL = process.env.AGENTCHAT_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
+const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
 
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 let step = 'setup';

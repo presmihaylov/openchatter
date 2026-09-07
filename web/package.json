@@ -1,5 +1,5 @@
 {
-  "name": "agentchat-web",
+  "name": "openchatter-web",
   "private": true,
   "type": "module",
   "scripts": {

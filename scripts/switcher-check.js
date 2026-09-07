@@ -75,7 +75,7 @@ const menuSlugs = (page) => page.$$eval('#ws-menu a.ws-item', (els) => els.map((
   await visible(pageA, '#ws-switcher-wrap');
   await pageA.waitForFunction(() => document.querySelector('#ws-current').textContent === 'ws zulu', { timeout: 8000 });
   // the tab title names the app and the workspace (task 20)
-  await pageA.waitForFunction(() => document.title === 'OpenFlock | ws zulu', { timeout: 8000 });
+  await pageA.waitForFunction(() => document.title === 'OpenChatter | ws zulu', { timeout: 8000 });
   const two = await createRoom(SERVER, sessionA, 'ws alpha');
   const slug2 = two.room.slug;
 
@@ -83,12 +83,12 @@ const menuSlugs = (page) => page.$$eval('#ws-menu a.ws-item', (els) => els.map((
   await pageA.goto(SERVER + '/w/' + slug2, { waitUntil: 'networkidle2' });
   await visible(pageA, '#chat-view');
   await pageA.waitForFunction(() => document.querySelector('#ws-current').textContent === 'ws alpha', { timeout: 8000 });
-  await pageA.waitForFunction(() => document.title === 'OpenFlock | ws alpha', { timeout: 8000 });
+  await pageA.waitForFunction(() => document.title === 'OpenChatter | ws alpha', { timeout: 8000 });
   // a workspace rename reaches the open tab live: header, switcher and title
   await call(SERVER, '/api/v1/room', { method: 'PATCH', token: sessionA, body: { name: 'ws alpha 2' }, headers: { 'X-Workspace-Slug': slug2 } });
-  await pageA.waitForFunction(() => document.title === 'OpenFlock | ws alpha 2' && document.querySelector('#ws-current').textContent === 'ws alpha 2', { timeout: 8000 });
+  await pageA.waitForFunction(() => document.title === 'OpenChatter | ws alpha 2' && document.querySelector('#ws-current').textContent === 'ws alpha 2', { timeout: 8000 });
   await call(SERVER, '/api/v1/room', { method: 'PATCH', token: sessionA, body: { name: 'ws alpha' }, headers: { 'X-Workspace-Slug': slug2 } });
-  await pageA.waitForFunction(() => document.title === 'OpenFlock | ws alpha', { timeout: 8000 });
+  await pageA.waitForFunction(() => document.title === 'OpenChatter | ws alpha', { timeout: 8000 });
   const userA = await call(SERVER, '/api/v1/user', { token: sessionA });
   if (userA.last_active_workspace_id !== two.room.id) throw new Error('last_active after opening ws alpha: ' + JSON.stringify(userA));
   if (userA.workspaces.map((w) => w.slug).join(',') !== slug1 + ',' + slug2) throw new Error('workspaces order: ' + JSON.stringify(userA.workspaces));

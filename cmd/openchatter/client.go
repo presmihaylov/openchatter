@@ -12,15 +12,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/presmihaylov/agentchat/pkg/envx"
+	"github.com/presmihaylov/openchatter/pkg/envx"
 )
 
-// The client directory carries the brand; legacyDir stays readable until the
-// whole fleet has migrated.
-const (
-	brandDir  = "openflock"
-	legacyDir = "agentchat"
-)
+// The client directory carries the brand.
+const brandDir = "openchatter"
 
 // profile is the saved identity for one room membership.
 type profile struct {
@@ -31,12 +27,7 @@ type profile struct {
 	JoinURL string `json:"join_url,omitempty"`
 }
 
-// profileDir is where a new profile is written: ~/.openflock, unless this
-// install predates the rename and still keeps its profiles in ~/.agentchat.
-// The test is whether a directory HOLDS profiles, not whether it exists: the
-// join instructions mkdir ~/.openflock for cli.sh, and an empty new directory
-// must not hide saved identities. Nothing here moves or copies a profile;
-// they are token files, so that move stays the human's.
+// profileDir is where profiles live: ~/.openchatter, or $OPENCHATTER_HOME.
 func profileDir() string {
 	if d := envx.Get("HOME"); d != "" {
 		return d
@@ -45,45 +36,18 @@ func profileDir() string {
 	if err != nil {
 		return "." + brandDir
 	}
-	newDir := filepath.Join(home, "."+brandDir)
-	if hasProfiles(newDir) {
-		return newDir
-	}
-	legacy := filepath.Join(home, "."+legacyDir)
-	if hasProfiles(legacy) {
-		return legacy
-	}
-	return newDir
+	return filepath.Join(home, "."+brandDir)
 }
 
-func hasProfiles(dir string) bool {
-	m, _ := filepath.Glob(filepath.Join(dir, "*.json"))
-	return len(m) > 0
-}
-
-// profilePath finds an existing profile in either directory, so an identity
-// saved before the rename still loads once the new directory has others in it.
 func profilePath(name string) string {
-	p := filepath.Join(profileDir(), name+".json")
-	if _, err := os.Stat(p); err == nil {
-		return p
-	}
-	if envx.Get("HOME") == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			legacy := filepath.Join(home, "."+legacyDir, name+".json")
-			if _, err := os.Stat(legacy); err == nil {
-				return legacy
-			}
-		}
-	}
-	return p
+	return filepath.Join(profileDir(), name+".json")
 }
 
 func loadProfile(name string) (profile, error) {
 	var p profile
 	raw, err := os.ReadFile(profilePath(name))
 	if err != nil {
-		return p, fmt.Errorf("no profile %q — run `agentchat join` first (%w)", name, err)
+		return p, fmt.Errorf("no profile %q — run `openchatter join` first (%w)", name, err)
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return p, err

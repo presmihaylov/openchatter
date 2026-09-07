@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 // feedEvent is a room event tagged with the workspace it came from.

@@ -3,7 +3,7 @@
 // on /settings (clears the banner, signs the other tab out), a room page that
 // boots on the session (and forgets the legacy per-slug act_ token) and one
 // that bounces a legacy act_ token to sign in, since 000027 retired them.
-// Needs Postgres for agentchat-passwd (AGENTCHAT_DB_URL, default the dev db).
+// Needs Postgres for openchatter-passwd (OPENCHATTER_DB_URL, default the dev db).
 const puppeteer = require('puppeteer-core');
 const { execFileSync } = require('child_process');
 const path = require('path');
@@ -11,7 +11,7 @@ const fs = require('fs');
 const { createRoom } = require('./lib/login.js');
 
 const SERVER = process.env.SERVER || 'http://localhost:8095';
-const DB_URL = process.env.AGENTCHAT_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
+const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
 const SHOTS = process.env.SHOTS_DIR || '';
 const REPO = path.resolve(__dirname, '..');
 
@@ -103,7 +103,7 @@ const userStatus = (page, tok) => page.evaluate(async (t) => {
   await visible(page, '#login-view');
   // the heading carries the app logo (a loaded image), and the tab icon is the brand favicon set
   const logo = await page.$eval('#login-view h1 img.logo', (img) => ({ ok: img.complete && img.naturalWidth > 0, src: img.getAttribute('src') }));
-  if (!logo.ok || logo.src !== '/brand/openflock-logo-mark.png') throw new Error('login logo: ' + JSON.stringify(logo));
+  if (!logo.ok || logo.src !== '/brand/openchatter-logo-mark.png') throw new Error('login logo: ' + JSON.stringify(logo));
   const icons = await page.$$eval('link[rel="icon"]', (ls) => ls.map((l) => l.getAttribute('href')));
   if (!icons.includes('/brand/favicon-32.png')) throw new Error('favicon links: ' + JSON.stringify(icons));
   const splashGone = await page.$eval('#splash', (el) => getComputedStyle(el).display === 'none');
@@ -260,8 +260,8 @@ const userStatus = (page, tok) => page.evaluate(async (t) => {
 
   // an operator reset flags the account: the banner shows on every page
   const tempPw = 'temporary horse 1';
-  execFileSync('go', ['run', './cmd/agentchat-passwd', user], {
-    cwd: REPO, input: tempPw, env: Object.assign({}, process.env, { AGENTCHAT_DB_URL: DB_URL }), stdio: ['pipe', 'pipe', 'inherit'],
+  execFileSync('go', ['run', './cmd/openchatter-passwd', user], {
+    cwd: REPO, input: tempPw, env: Object.assign({}, process.env, { OPENCHATTER_DB_URL: DB_URL }), stdio: ['pipe', 'pipe', 'inherit'],
   });
   // the reset revoked the session: the page bounces to login
   await page.goto(SERVER + '/settings', { waitUntil: 'networkidle2' });

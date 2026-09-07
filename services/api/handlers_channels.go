@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request, p models.Participant) {

@@ -54,7 +54,7 @@ const errors = [];
   assert((await badgeOf(page, home.room.slug)).hidden, 'home badged');
 
   const favicon = () => page.$eval('link[rel="icon"]', (l) => l.getAttribute('href'));
-  assert(await page.title() === 'OpenFlock | home base', 'clean title: ' + await page.title());
+  assert(await page.title() === 'OpenChatter | home base', 'clean title: ' + await page.title());
   assert((await favicon()).startsWith('/brand/'), 'clean favicon: ' + await favicon());
 
   step = '2';
@@ -65,7 +65,7 @@ const errors = [];
   await waitBadge(page, away.room.slug, 'count:1');
   const plain = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"] .rail-badge', (b) => { const c = getComputedStyle(b); return { bg: c.backgroundColor, text: b.textContent }; });
   assert(plain.bg !== 'rgb(237, 66, 69)', 'plain unread painted red: ' + JSON.stringify(plain));
-  await page.waitForFunction(() => document.title === '(1) OpenFlock | home base', { timeout: 4000 });
+  await page.waitForFunction(() => document.title === '(1) OpenChatter | home base', { timeout: 4000 });
   assert((await favicon()).startsWith('data:image/png'), 'favicon not drawn: ' + await favicon());
   const labelPlain = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"]', (a) => a.getAttribute('aria-label'));
   assert(labelPlain === 'away team, 1 unread', 'aria-label: ' + labelPlain);
@@ -79,7 +79,7 @@ const errors = [];
   assert((await badgeOf(page, home.room.slug)).hidden, 'home badged by away traffic');
   const label = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"]', (a) => a.getAttribute('aria-label'));
   assert(label === 'away team, 1 mentions', 'aria-label: ' + label);
-  await page.waitForFunction(() => document.title === '(2) OpenFlock | home base', { timeout: 4000 });
+  await page.waitForFunction(() => document.title === '(2) OpenChatter | home base', { timeout: 4000 });
   // the count badge is the alert red with a white bold count (task 20, Maya msg 4561407a)
   const paint = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"] .rail-badge', (b) => { const c = getComputedStyle(b); return { bg: c.backgroundColor, fg: c.color, weight: c.fontWeight }; });
   assert(paint.bg === 'rgb(237, 66, 69)' && paint.fg === 'rgb(255, 255, 255)' && Number(paint.weight) >= 600, 'badge paint: ' + JSON.stringify(paint));
@@ -90,7 +90,7 @@ const errors = [];
   for (let i = 0; i < 98; i++) await postAway('flood ' + i);
   await refocus(page);
   await waitBadge(page, away.room.slug, 'mention:1');
-  await page.waitForFunction(() => document.title === '(100) OpenFlock | home base', { timeout: 8000 }).catch(async () => { throw new Error('title after flood: ' + await page.title() + ' badge ' + JSON.stringify(await badgeOf(page, away.room.slug))); });
+  await page.waitForFunction(() => document.title === '(100) OpenChatter | home base', { timeout: 8000 }).catch(async () => { throw new Error('title after flood: ' + await page.title() + ' badge ' + JSON.stringify(await badgeOf(page, away.room.slug))); });
   await postAway('@avabadge again');
   await refocus(page);
   await waitBadge(page, away.room.slug, 'mention:2');
@@ -105,7 +105,7 @@ const errors = [];
   await pageC.setViewport({ width: 1280, height: 800 });
   await openWorkspace(pageC, SERVER, sessionC, home.room.slug);
   await waitBadge(pageC, away.room.slug, 'count:99+');
-  await pageC.waitForFunction(() => document.title === '(100) OpenFlock | home base', { timeout: 8000 });
+  await pageC.waitForFunction(() => document.title === '(100) OpenChatter | home base', { timeout: 8000 });
   await pageC.screenshot({ path: path.join(OUT, 'railbadge-99plus.png') });
   await ctxC.close();
 

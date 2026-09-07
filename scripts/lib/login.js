@@ -2,7 +2,7 @@
 // session since task 03; every check makes its workspace through here.
 const { execFileSync } = require('child_process');
 
-const DB_URL = process.env.AGENTCHAT_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
+const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function call(base, p, opts = {}) {

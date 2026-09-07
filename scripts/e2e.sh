@@ -5,10 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PORT="${E2E_PORT:-8099}"
-export AGENTCHAT_DB_URL="${AGENTCHAT_DB_URL:-postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable}"
-export AGENTCHAT_PORT="$PORT"
-export AGENTCHAT_PUBLIC_URL="http://localhost:$PORT"
-export AGENTCHAT_HOME="$(mktemp -d)"
+export OPENCHATTER_DB_URL="${OPENCHATTER_DB_URL:-postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable}"
+export OPENCHATTER_PORT="$PORT"
+export OPENCHATTER_PUBLIC_URL="http://localhost:$PORT"
+export OPENCHATTER_HOME="$(mktemp -d)"
 SERVER="http://localhost:$PORT"
 
 PASS=0; FAIL=0
@@ -26,13 +26,13 @@ expect_fail() { # expect_fail <desc> <cmd...>
 echo "== build =="
 [ -d web/node_modules ] || (cd web && npm ci --silent)
 (cd web && npm run build --silent)
-go build -o bin/agentchat ./cmd/agentchat
-go build -o bin/agentchatd ./cmd/agentchatd
-CLI=./bin/agentchat
+go build -o bin/openchatter ./cmd/openchatter
+go build -o bin/openchatterd ./cmd/openchatterd
+CLI=./bin/openchatter
 
 echo "== start server on :$PORT =="
-./bin/agentchatd & SRV_PID=$!
-cleanup() { kill "$SRV_PID" 2>/dev/null || true; rm -rf "$AGENTCHAT_HOME"; }
+./bin/openchatterd & SRV_PID=$!
+cleanup() { kill "$SRV_PID" 2>/dev/null || true; rm -rf "$OPENCHATTER_HOME"; }
 trap cleanup EXIT
 for i in $(seq 1 30); do curl -sf "$SERVER/healthz" >/dev/null && break; sleep 0.3; done
 curl -sf "$SERVER/healthz" >/dev/null || { echo "server did not start"; exit 1; }
@@ -80,10 +80,10 @@ $CLI thread "$MSG_ID" --profile wri | grep -q "memory limits" && ok "thread read
 $CLI messages findings --profile pm | grep -q "OOM-killed" && ok "history readable" || fail "history readable"
 
 echo "== attachments =="
-echo "memory usage report: 97% on node-3" > "$AGENTCHAT_HOME/report.txt"
-ATT_ID=$($CLI upload "$AGENTCHAT_HOME/report.txt" --profile res)
+echo "memory usage report: 97% on node-3" > "$OPENCHATTER_HOME/report.txt"
+ATT_ID=$($CLI upload "$OPENCHATTER_HOME/report.txt" --profile res)
 [ -n "$ATT_ID" ] && ok "uploaded" || fail "uploaded"
-check "post with attachment" $CLI post findings "full report attached" --attach "$AGENTCHAT_HOME/report.txt" --profile res
+check "post with attachment" $CLI post findings "full report attached" --attach "$OPENCHATTER_HOME/report.txt" --profile res
 $CLI download "$ATT_ID" --profile wri | grep -q "node-3" && ok "download roundtrip" || fail "download roundtrip"
 
 echo "== tags & presence =="
@@ -113,8 +113,8 @@ fi
 echo "== moderation =="
 check "author edits own message" $CLI edit "$MSG_ID" "kubernetes pods OOM-killed (edited: confirmed)" --profile res
 expect_fail "non-author cannot edit" $CLI edit "$MSG_ID" "vandalism" --profile wri
-check "admin deletes a channel" bash -c "./bin/agentchat channel-delete findings --profile orch"
-expect_fail "kicked member loses access" bash -c "./bin/agentchat kick writer --profile orch && ./bin/agentchat whoami --profile wri"
+check "admin deletes a channel" bash -c "./bin/openchatter channel-delete findings --profile orch"
+expect_fail "kicked member loses access" bash -c "./bin/openchatter kick writer --profile orch && ./bin/openchatter whoami --profile wri"
 INV_ID=$($CLI invites --profile orch | awk 'NR==1{print $1}')
 [ -n "$INV_ID" ] && ok "admin lists invite links" || fail "admin lists invite links"
 expect_fail "member cannot list invite links" $CLI invites --profile res

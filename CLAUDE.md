@@ -1,9 +1,9 @@
-# OpenFlock — working rules
+# OpenChatter — working rules
 
 Single Go binary + Postgres (pgvector). Server code in `services/api`, storage in
 `models`, web UI in `web/` (Vite app: `web/index.html`, `web/src`, vendor libs in
 `web/public/vendor`; `npm run build` emits `web/dist`, embedded into the binary),
-entrypoint `cmd/agentchatd`.
+entrypoint `cmd/openchatterd`.
 
 ## Always write tests
 
@@ -22,14 +22,14 @@ Every new feature and every bug fix ships with tests in the same change. No exce
 ```sh
 go build ./...
 # Go tests need a live Postgres (docker compose db, port 5477):
-AGENTCHAT_DB_URL="postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable" \
+OPENCHATTER_DB_URL="postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable" \
   go test ./services/... ./models/... ./pkg/... -count=1
 # Rebuild the dev app container (builds and serves the web UI too):
 set -a && source .env && set +a && docker compose up -d --build app
 bash scripts/e2e.sh                        # REST end-to-end (needs sourced .env)
 SERVER=http://localhost:8095 bash scripts/cli-e2e.sh   # cli.sh end-to-end (CLI_E2E_OK)
 # Browser e2e (needs puppeteer-core on NODE_PATH; every check makes its room through
-# scripts/lib/login.js, whose newRoom() needs psql on PATH and the dev db, AGENTCHAT_DB_URL):
+# scripts/lib/login.js, whose newRoom() needs psql on PATH and the dev db, OPENCHATTER_DB_URL):
 node scripts/ui-smoke.js                    # UI_SMOKE_OK
 node scripts/url-check.js                   # URL_CHECK_OK
 node scripts/replybar-check.js              # REPLYBAR_CHECK_OK
@@ -56,7 +56,7 @@ node scripts/emoji-check.js                 # EMOJI_CHECK_OK
 node scripts/theme-check.js                 # THEME_CHECK_OK
 node scripts/settings-check.js              # SETTINGS_CHECK_OK (same)
 node scripts/icons-check.js                # ICONS_CHECK_OK (every chrome icon is an inline Lucide svg, stroke 2, 16/20/24, no glyphs, task 24)
-node scripts/openflock-check.js            # OPENFLOCK_CHECK_OK (brand: name, mark, favicon set, splash, skill and cli.sh)
+node scripts/openchatter-check.js            # OPENCHATTER_CHECK_OK (brand: name, mark, favicon set, splash, skill and cli.sh)
 node scripts/wsavatar-check.js              # WSAVATAR_CHECK_OK
 node scripts/rail-check.js                  # RAIL_CHECK_OK
 node scripts/railbadge-check.js             # RAILBADGE_CHECK_OK (count pills, 99+, title, favicon)
@@ -69,7 +69,7 @@ node scripts/slug-check.js                 # SLUG_CHECK_OK
 node scripts/reactions-check.js             # REACTIONS_CHECK_OK
 node scripts/codeblock-check.js             # CODEBLOCK_CHECK_OK
 node scripts/docpreview-check.js           # DOCPREVIEW_CHECK_OK
-node scripts/login-check.js                # LOGIN_CHECK_OK (needs AGENTCHAT_DB_URL for agentchat-passwd)
+node scripts/login-check.js                # LOGIN_CHECK_OK (needs OPENCHATTER_DB_URL for openchatter-passwd)
 node scripts/settings-nav-check.js         # SETTINGS_NAV_CHECK_OK (same)
 node scripts/enter-check.js                # ENTER_CHECK_OK
 node scripts/dateseps-check.js             # DATESEPS_CHECK_OK

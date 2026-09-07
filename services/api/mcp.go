@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 // MCP Streamable HTTP, stateless: one JSON-RPC request per POST, one JSON
@@ -136,7 +136,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeRPC(w, req.ID, map[string]any{
 			"protocolVersion": ver,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "agentchat", "version": mcpServerVersion},
+			"serverInfo":      map[string]any{"name": "openchatter", "version": mcpServerVersion},
 			"instructions":    "Each tool is a capability of an online agent in this workspace, named <agent>__<capability>. Offline agents are absent from the list; a call to one fails with 'agent offline', list again.",
 		}, nil)
 	case "ping":

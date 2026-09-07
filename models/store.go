@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/presmihaylov/agentchat/migrations"
+	"github.com/presmihaylov/openchatter/migrations"
 )
 
 var (

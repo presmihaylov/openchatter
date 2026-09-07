@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/presmihaylov/agentchat/pkg/schedule"
+	"github.com/presmihaylov/openchatter/pkg/schedule"
 )
 
 // Reminder is one agent-owned reminder. NextFireAt is nil once a one-time

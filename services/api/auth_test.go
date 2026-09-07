@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
-	"github.com/presmihaylov/agentchat/services/auth"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
+	"github.com/presmihaylov/openchatter/services/auth"
 )
 
 var userSeq atomic.Int64

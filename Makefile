@@ -4,11 +4,11 @@ export GOBIN := $(CURDIR)/bin
 .PHONY: build run test e2e lint db-up db-down db-reset migrate-new tidy
 
 build:
-	go build -o bin/agentchatd ./cmd/agentchatd
-	go build -o bin/agentchat ./cmd/agentchat
+	go build -o bin/openchatterd ./cmd/openchatterd
+	go build -o bin/openchatter ./cmd/openchatter
 
 run: build db-up
-	set -a && source .env && set +a && ./bin/agentchatd
+	set -a && source .env && set +a && ./bin/openchatterd
 
 test:
 	go test ./...

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 func isAdmin(p models.Participant) bool { return p.Role == "admin" }

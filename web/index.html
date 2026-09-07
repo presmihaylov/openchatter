@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OpenFlock</title>
+  <title>OpenChatter</title>
   <script>
     // Stamp the theme before first paint so a light-mode user never sees a dark flash.
     // Mode lives in localStorage (per browser); "system" follows the OS.
@@ -31,16 +31,16 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/brand/apple-touch-icon.png">
 </head>
 <body>
-  <div id="splash" aria-hidden="true"><img src="/brand/openflock-logo-mark.png" alt=""></div>
+  <div id="splash" aria-hidden="true"><img src="/brand/openchatter-logo-mark.png" alt=""></div>
   <header id="app-header" class="hidden">
-    <a id="app-brand" href="/"><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> OpenFlock</a>
+    <a id="app-brand" href="/"><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> OpenChatter</a>
     <span id="app-user" class="hidden"><span id="app-username"></span><button type="button" id="app-signout"><svg class="ico lucide" data-icon="log-out" viewBox="0 0 24 24" aria-hidden="true"><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /></svg> Sign out</button></span>
   </header>
   <div id="pw-banner" class="banner hidden">Your password was set by an administrator. <a href="/settings">Change it in Settings</a>.</div>
 
   <div id="login-view" class="auth-view hidden">
     <form id="login-form" class="auth-form">
-      <h1><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> Sign in</h1>
+      <h1><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> Sign in</h1>
       <p id="login-invite" class="hint hidden"></p>
       <p id="login-error" class="error hidden"></p>
       <label>Username <input id="login-username" required maxlength="32" autocomplete="username" autocapitalize="none" placeholder="e.g. maria-chen"></label>
@@ -53,7 +53,7 @@
 
   <div id="register-view" class="auth-view hidden">
     <form id="register-form" class="auth-form">
-      <h1><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> Create account</h1>
+      <h1><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> Create account</h1>
       <p id="register-invite" class="hint hidden"></p>
       <p id="register-error" class="error hidden"></p>
       <label>Username <input id="register-username" required minlength="2" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]{1,31}" autocomplete="username" autocapitalize="none" placeholder="lowercase letters, digits, - or _"></label>
@@ -66,7 +66,7 @@
 
   <div id="register-closed" class="auth-view hidden">
     <div class="auth-form">
-      <h1><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> Registration is closed</h1>
+      <h1><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> Registration is closed</h1>
       <p class="hint">Ask an administrator for an account, then <a href="/login">sign in</a>.</p>
     </div>
   </div>
@@ -74,7 +74,7 @@
   <div id="settings-view" class="auth-view hidden">
     <div class="auth-form settings-card">
       <a id="settings-back" class="back-link" href="/create"><svg class="ico lucide" data-icon="arrow-left" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg> Back</a>
-      <h1><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> Settings</h1>
+      <h1><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> Settings</h1>
       <div id="settings-body">
       <nav id="settings-nav" role="tablist" aria-label="Settings sections">
         <button type="button" id="tab-workspace" role="tab" data-tab="workspace"><svg class="ico lucide" data-icon="building-2" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 12h4" /><path d="M10 8h4" /><path d="M14 21v-3a2 2 0 0 0-4 0v3" /><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" /><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16" /></svg> Workspace</button>
@@ -184,7 +184,7 @@
 
   <div id="no-ws-view" class="hidden">
     <div id="no-ws-card">
-      <h1><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> You are in no workspace</h1>
+      <h1><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> You are in no workspace</h1>
       <p class="hint">Create one, or enter one you were invited to.</p>
       <form id="no-ws-create-form">
         <h2>Create a workspace</h2>
@@ -204,7 +204,7 @@
 
   <div id="enter-view" class="hidden">
     <form id="enter-form">
-      <h1><span id="enter-room-icon"><img class="logo" src="/brand/openflock-logo-mark.png" alt=""></span> Enter <span id="enter-room-name">this workspace</span></h1>
+      <h1><span id="enter-room-icon"><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""></span> Enter <span id="enter-room-name">this workspace</span></h1>
       <p id="enter-error" class="error hidden"></p>
       <label>Invite link <input id="enter-code" required placeholder="https://…/join/inv-xxxx-xxxx-xxxx-xxxx" autocomplete="off"></label>
       <button type="submit">Enter workspace</button>
@@ -214,7 +214,7 @@
 
   <div id="join-view" class="hidden">
     <div id="join-page-card">
-      <h1><span id="join-room-icon"><img class="logo" src="/brand/openflock-logo-mark.png" alt=""></span> <span id="join-title">Joining…</span></h1>
+      <h1><span id="join-room-icon"><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""></span> <span id="join-title">Joining…</span></h1>
       <p id="join-msg" class="hint"></p>
       <a id="join-home" class="button-link hidden" href="/">Go to my workspaces</a>
     </div>
@@ -231,7 +231,7 @@
   <div id="create-view" class="hidden">
     <form id="create-form">
       <a id="create-back" class="back-link" href="/create"><svg class="ico lucide" data-icon="arrow-left" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg> Back</a>
-      <h1><img class="logo" src="/brand/openflock-logo-mark.png" alt=""> Create a workspace</h1>
+      <h1><img class="logo" src="/brand/openchatter-logo-mark.png" alt=""> Create a workspace</h1>
       <p id="create-error" class="error hidden"></p>
       <label>Workspace name <input id="create-room-name" required maxlength="100" placeholder="e.g. acme research" autocomplete="off"></label>
       <label>Link <span class="slug-row"><span class="slug-prefix">/w/</span><input id="create-room-slug" maxlength="60" placeholder="acme-research" autocomplete="off" spellcheck="false"></span></label>

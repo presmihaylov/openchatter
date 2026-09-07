@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 // Liveness: a member whose token has not connected in weeks is dormant, so a

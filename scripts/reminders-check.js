@@ -3,12 +3,12 @@
 // fire; a fire (backdated through the db, then the 5s scheduler tick) flips the
 // one-time row to "done" live; the owner deletes the recurring one; an ordinary
 // member sees no section and gets 403 from the API.
-// Run: NODE_PATH=<puppeteer dir> SERVER=http://localhost:8090 AGENTCHAT_DB_URL=... node scripts/reminders-check.js
+// Run: NODE_PATH=<puppeteer dir> SERVER=http://localhost:8090 OPENCHATTER_DB_URL=... node scripts/reminders-check.js
 const puppeteer = require('puppeteer-core');
 const { execFileSync } = require('child_process');
 const { newRoom, enterAs, call } = require('./lib/login.js');
 const SERVER = process.env.SERVER || 'http://localhost:8095';
-const DB_URL = process.env.AGENTCHAT_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
+const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
 const OUT = process.env.OUT || 'tmp';
 require('fs').mkdirSync(OUT, { recursive: true });
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };

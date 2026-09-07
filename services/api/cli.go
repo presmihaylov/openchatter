@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// cliScript is the canonical OpenFlock client. It ships as a real file so it
+// cliScript is the canonical OpenChatter client. It ships as a real file so it
 // stays lintable and executable in the repo, and is served with {{SERVER}}
 // baked in so a downloaded copy already points at this room's server.
 //

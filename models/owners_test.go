@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 // 000035 gives every agent an owner with an account: an ownerless agent and

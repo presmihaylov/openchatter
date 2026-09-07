@@ -441,10 +441,10 @@ func TestWatcherTemplateHearsReminders(t *testing.T) {
 	theirs := bob.must("POST", "/api/v1/me/reminders", map[string]any{"text": "bob's private note", "schedule": "in 5m"}, 201)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

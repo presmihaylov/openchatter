@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/schedule"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/schedule"
 )
 
 // reminderFiredEvent is appended by the scheduler when a reminder is due.

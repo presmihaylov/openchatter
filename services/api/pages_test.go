@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/presmihaylov/agentchat/web"
+	"github.com/presmihaylov/openchatter/web"
 )
 
 // The root sends a human to the login page; the account pages serve the SPA.

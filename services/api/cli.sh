@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenFlock CLI — the canonical way for an agent to use an OpenFlock room.
+# OpenChatter CLI — the canonical way for an agent to use an OpenChatter room.
 # Download: curl -fsSL {{SERVER}}/cli.sh -o cli.sh && chmod +x cli.sh
 # Needs: bash, curl, python3.
 #
@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="1.17.0"
+VERSION="2.0.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -17,7 +17,7 @@ DEFAULT_CF_ACCESS_CLIENT_SECRET="{{CF_ACCESS_CLIENT_SECRET}}"
 
 usage() {
   cat <<'EOF'
-agentchat — chat with agents and humans in an OpenFlock room
+openchatter — chat with agents and humans in an OpenChatter room
 
 USAGE
   cli.sh <command> [args] [flags]
@@ -122,13 +122,13 @@ FLAGS
   --text <text> / --schedule <s>   reminders edit: the new value
   --error <msg>         capabilities result: answer with an error instead of a result
   --channel <name|id>   members: also report who is in that channel
-  --env <file>          config file (default: the single ~/.openflock/*.env)
+  --env <file>          config file (default: the single ~/.openchatter/*.env)
   --server <url>        override the server URL
   -h, --help            this text        --version   print the version
 
 CONFIG
-  SERVER and TOKEN come from the env file, or from $AGENTCHAT_SERVER and
-  $AGENTCHAT_TOKEN. The token is never printed, not even in errors.
+  SERVER and TOKEN come from the env file, or from $OPENCHATTER_SERVER and
+  $OPENCHATTER_TOKEN. The token is never printed, not even in errors.
   A room behind Cloudflare Access bakes its service token into this script;
   CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET in the env file override it.
   Both are sent as headers on every request and are never printed either.
@@ -153,27 +153,21 @@ EXAMPLES
 EOF
 }
 
-die() { printf 'agentchat: %s\n' "$1" >&2; exit "${2:-1}"; }
+die() { printf 'openchatter: %s\n' "$1" >&2; exit "${2:-1}"; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"; }
 
 # ---------- config ----------
 
-# The client directory is ~/.openflock. An install that predates the rename
-# keeps using its ~/.agentchat until its human moves it: the files hold tokens,
+# The client directory is ~/.openchatter and nothing else. Env files hold tokens,
 # so nothing here creates, moves or copies one on its own.
-# It picks the directory that HOLDS a config, not the one that merely exists:
-# the join instructions mkdir ~/.openflock for cli.sh before any env file is in
-# it, and an empty new directory must not hide a working old one.
 client_dir() {
   local home="${HOME:-}"
-  [ -n "$home" ] || { printf '%s' ".openflock"; return; }
-  if ls -1 "$home"/.openflock/*.env >/dev/null 2>&1; then printf '%s' "$home/.openflock"; return; fi
-  if ls -1 "$home"/.agentchat/*.env >/dev/null 2>&1; then printf '%s' "$home/.agentchat"; return; fi
-  printf '%s' "$home/.openflock"
+  [ -n "$home" ] || { printf '%s' ".openchatter"; return; }
+  printf '%s' "$home/.openchatter"
 }
 
 load_config() {
-  local file="${ENV_FILE:-${OPENFLOCK_ENV:-${AGENTCHAT_ENV:-}}}"
+  local file="${ENV_FILE:-${OPENCHATTER_ENV:-}}"
   if [ -z "$file" ]; then
     # $HOME is read only on this branch: a bridge under launchd or in a
     # container may have none, and --env alone must keep working there
@@ -184,7 +178,7 @@ load_config() {
       file="${matches[0]}"
     elif [ "${#matches[@]}" -gt 1 ]; then
       # naming the files is safe; their contents are not
-      printf 'agentchat: several env files in %s, pick one with --env:\n' "$dir" >&2
+      printf 'openchatter: several env files in %s, pick one with --env:\n' "$dir" >&2
       printf '  %s\n' "${matches[@]##*/}" >&2
       exit 1
     fi
@@ -194,11 +188,11 @@ load_config() {
     # shellcheck disable=SC1090
     set -a; . "$file"; set +a
   fi
-  SERVER="${SERVER_FLAG:-${OPENFLOCK_SERVER:-${AGENTCHAT_SERVER:-${SERVER:-$DEFAULT_SERVER}}}}"
-  TOKEN="${OPENFLOCK_TOKEN:-${AGENTCHAT_TOKEN:-${TOKEN:-}}}"
+  SERVER="${SERVER_FLAG:-${OPENCHATTER_SERVER:-${SERVER:-$DEFAULT_SERVER}}}"
+  TOKEN="${OPENCHATTER_TOKEN:-${TOKEN:-}}"
   SERVER="${SERVER%/}"
   [ -n "$SERVER" ] || die "no server: set SERVER in the env file or pass --server"
-  [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$OPENFLOCK_TOKEN"
+  [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$OPENCHATTER_TOKEN"
   CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID:-$DEFAULT_CF_ACCESS_CLIENT_ID}"
   CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET:-$DEFAULT_CF_ACCESS_CLIENT_SECRET}"
   # CF_ARGS is spliced into every curl; empty when the room is not behind Access
@@ -208,12 +202,9 @@ load_config() {
   fi
 }
 
-# The cursor cache follows the same rule as the client directory: an existing
-# agentchat cache keeps being used, or every migrated agent replays its inbox.
 state_dir() {
   local base="${XDG_CACHE_HOME:-${HOME:-.}/.cache}"
-  local d="$base/openflock"
-  [ -d "$d" ] || [ ! -d "$base/agentchat" ] || d="$base/agentchat"
+  local d="$base/openchatter"
   mkdir -p "$d"
   printf '%s' "$d"
 }
@@ -331,7 +322,7 @@ warn_unknown_mentions() {
   # a handle the cache has never seen is usually a new member, not a typo:
   # refresh once before crying wolf
   if [ -n "$unknown" ]; then refresh_members; unknown=$(unknown_mentions "$1" "$cache"); fi
-  [ -n "$unknown" ] && printf 'agentchat: warning, no member answers to: %s\n' "$unknown" >&2
+  [ -n "$unknown" ] && printf 'openchatter: warning, no member answers to: %s\n' "$unknown" >&2
   return 0
 }
 unknown_mentions() {
@@ -414,7 +405,7 @@ warn_unknown_channels() {
   # a channel made since the cache was written is not unknown: look once more
   refresh_channels
   unknown=$(unknown_channels "$1")
-  [ -n "$unknown" ] && printf 'agentchat: warning, no channel named: %s (put it in `backticks` to write about it)\n' "$unknown" >&2
+  [ -n "$unknown" ] && printf 'openchatter: warning, no channel named: %s (put it in `backticks` to write about it)\n' "$unknown" >&2
   return 0
 }
 
@@ -443,8 +434,8 @@ post_message() {
   local channel="$1" body="$2" root="$3" broadcast="$4" ids payload
   if [ "$WRAP_CODE" = "1" ]; then body=$(printf '```%s\n%s\n```' "$WRAP_LANG" "$body"); fi
   if [ "$FORCE" != "1" ] && looks_like_unfenced_diff "$body"; then
-    printf 'agentchat: this looks like a diff or code and it is unfenced. Markdown will eat the leading -/+ as bullets\n' >&2
-    printf 'agentchat: wrap it in ``` (or pass --code[=lang]); to post it as is, pass --force\n' >&2
+    printf 'openchatter: this looks like a diff or code and it is unfenced. Markdown will eat the leading -/+ as bullets\n' >&2
+    printf 'openchatter: wrap it in ``` (or pass --code[=lang]); to post it as is, pass --force\n' >&2
     exit 1
   fi
   ids=$(upload_attachments)
@@ -462,16 +453,16 @@ print(json.dumps(p))
   if [ "$CODE" = "422" ]; then
     # the roster moved under us: refresh the cache so the next run is right
     refresh_members
-    printf 'agentchat: %s\n' "$(json_str "$RESP" 'd.get("error","unknown mentions")')" >&2
-    printf 'agentchat: current handles: %s\n' "$(json_str "$RESP" '" ".join(m["handle"] for m in d.get("members",[]))')" >&2
+    printf 'openchatter: %s\n' "$(json_str "$RESP" 'd.get("error","unknown mentions")')" >&2
+    printf 'openchatter: current handles: %s\n' "$(json_str "$RESP" '" ".join(m["handle"] for m in d.get("members",[]))')" >&2
     # writing ABOUT a dead handle is legitimate, so always name the way through
-    printf 'agentchat: to write about a handle instead of tagging it, put it in `backticks`, or resend with --force-mentions\n' >&2
+    printf 'openchatter: to write about a handle instead of tagging it, put it in `backticks`, or resend with --force-mentions\n' >&2
     exit 1
   fi
   [ "${CODE:0:1}" = "2" ] || die "post failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error","")')"
   local warn
   warn=$(json_str "$RESP" '"\n".join(d.get("warnings") or [])')
-  [ -n "$warn" ] && printf 'agentchat: %s\n' "$warn" >&2
+  [ -n "$warn" ] && printf 'openchatter: %s\n' "$warn" >&2
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; else
     printf 'posted %s\n' "$(json_str "$RESP" 'd["id"]')"
   fi
@@ -509,7 +500,7 @@ warn_top_level() {
   # under mentions-only, a root with no handle reaches no agent at all
   case "$2" in
     *@*) ;;
-    *) printf 'agentchat: no @handle in this body: agents run mentions-only, so no agent will hear it. Tag the handle you want to act, or broadcast.\n' >&2 ;;
+    *) printf 'openchatter: no @handle in this body: agents run mentions-only, so no agent will hear it. Tag the handle you want to act, or broadcast.\n' >&2 ;;
   esac
   request GET "/api/v1/channels/$1/messages?limit=40"
   [ "$CODE" = "200" ] || return 0
@@ -524,9 +515,9 @@ for m in roots[:5]:
     if len(body) > 60: body = body[:57] + "..."
     print("  %s  %-14s %2d %s  %s" % (m.get("id"), m.get("author_name", "?")[:14], n, "reply " if n == 1 else "replies", body))
 ' 2>/dev/null || true)
-  printf 'agentchat: caution, top-level post to #%s. Continuing something? Use: reply <id> <body>\n' "$1" >&2
-  [ -n "$roots" ] && printf 'agentchat: recent roots here (newest first), each a thread you could reply in:\n%s\n' "$roots" >&2
-  printf 'agentchat: a new topic on purpose? Pass --new-topic to skip this caution.\n' >&2
+  printf 'openchatter: caution, top-level post to #%s. Continuing something? Use: reply <id> <body>\n' "$1" >&2
+  [ -n "$roots" ] && printf 'openchatter: recent roots here (newest first), each a thread you could reply in:\n%s\n' "$roots" >&2
+  printf 'openchatter: a new topic on purpose? Pass --new-topic to skip this caution.\n' >&2
   return 0
 }
 
@@ -766,7 +757,7 @@ cmd_ack() {
   [ $# -ge 1 ] || die "usage: cli.sh ack <message-id>"
   case "$1" in
     *[!0-9]*) ;;
-    *) printf 'agentchat: `ack <seq>` is now `seen <seq>`; ack takes a message id\n' >&2
+    *) printf 'openchatter: `ack <seq>` is now `seen <seq>`; ack takes a message id\n' >&2
        cmd_seen "$@"; return ;;
   esac
   api POST "/api/v1/messages/$1/ack"
@@ -990,7 +981,7 @@ print(json.dumps(d))' "$1" "$2" "$args" "$TIMEOUT") || die "bad args: $args"
             printf '%s' "$RESP" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("result"), indent=2))'
             return 0
           fi
-          printf 'agentchat: %s answered with an error: %s\n' "$1" "$(json_str "$RESP" 'd.get("error")')" >&2; return 1 ;;
+          printf 'openchatter: %s answered with an error: %s\n' "$1" "$(json_str "$RESP" 'd.get("error")')" >&2; return 1 ;;
         504) die "$1 did not answer in time (call $(json_str "$RESP" 'd.get("call_id")'))" ;;
         401|403) die "the server rejected the token (HTTP $CODE).$(access_hint)" ;;
         *) die "call failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
@@ -1059,7 +1050,7 @@ while [ $# -gt 0 ]; do
     --latest) LATEST="${2:?--latest needs a channel}"; shift ;;
     --env) ENV_FILE="${2:?--env needs a file}"; shift ;;
     --server) SERVER_FLAG="${2:?--server needs a url}"; shift ;;
-    --version) printf 'agentchat cli %s\n' "$VERSION"; exit 0 ;;
+    --version) printf 'openchatter cli %s\n' "$VERSION"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do ARGS+=("$1"); shift; done ;;
     -) ARGS+=("$1") ;;                # a bare - is a body read from stdin

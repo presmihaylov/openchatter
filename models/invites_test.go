@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 func joinWith(t *testing.T, s *Store, roomID, name string, inv Invite) (Participant, error) {

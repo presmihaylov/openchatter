@@ -1,4 +1,4 @@
-// Command agentchatd runs the OpenFlock server.
+// Command openchatterd runs the OpenChatter server.
 package main
 
 import (
@@ -18,11 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/envx"
-	"github.com/presmihaylov/agentchat/services/api"
-	"github.com/presmihaylov/agentchat/services/auth"
-	"github.com/presmihaylov/agentchat/services/embed"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/envx"
+	"github.com/presmihaylov/openchatter/services/api"
+	"github.com/presmihaylov/openchatter/services/auth"
+	"github.com/presmihaylov/openchatter/services/embed"
 )
 
 func main() {
@@ -53,14 +53,14 @@ func authConfig(getenv func(string) string) (registration bool, ttl time.Duratio
 	if v := envx.GetFrom(getenv, "REGISTRATION_ENABLED"); v != "" {
 		registration, err = strconv.ParseBool(v)
 		if err != nil {
-			return false, 0, fmt.Errorf("OPENFLOCK_REGISTRATION_ENABLED: %w", err)
+			return false, 0, fmt.Errorf("OPENCHATTER_REGISTRATION_ENABLED: %w", err)
 		}
 	}
 	ttl = 720 * time.Hour
 	if v := envx.GetFrom(getenv, "SESSION_TTL"); v != "" {
 		ttl, err = time.ParseDuration(v)
 		if err != nil || ttl <= 0 {
-			return false, 0, fmt.Errorf("OPENFLOCK_SESSION_TTL must be a positive duration like 720h, got %q", v)
+			return false, 0, fmt.Errorf("OPENCHATTER_SESSION_TTL must be a positive duration like 720h, got %q", v)
 		}
 	}
 	return registration, ttl, nil
@@ -80,7 +80,7 @@ func authProviders(store auth.PasswordStore, registration bool, getenv func(stri
 // given; version 0 is not a valid target, so a plain zero cannot stand in for
 // "absent".
 func parseFlags(args []string) (migrateTo *uint, err error) {
-	fs := flag.NewFlagSet("agentchatd", flag.ContinueOnError)
+	fs := flag.NewFlagSet("openchatterd", flag.ContinueOnError)
 	v := fs.Uint("migrate-to", 0, "move the schema to this migration version and exit without serving (rollback step, see docs/PROD.md)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func run() error {
 	}
 	dbURL := envx.Get("DB_URL")
 	if dbURL == "" {
-		return errors.New("OPENFLOCK_DB_URL is required")
+		return errors.New("OPENCHATTER_DB_URL is required")
 	}
 	if migrateTo != nil {
 		got, err := models.MigrateTo(context.Background(), dbURL, *migrateTo)
@@ -120,11 +120,6 @@ func run() error {
 	publicURL := envx.Get("PUBLIC_URL")
 	if publicURL == "" {
 		publicURL = "http://localhost:" + port
-	}
-
-	if old := envx.LegacyInUse(os.Getenv, "DB_URL", "PORT", "PUBLIC_URL", "TRUST_PROXY",
-		"REGISTRATION_ENABLED", "SESSION_TTL"); len(old) > 0 {
-		slog.Warn("using deprecated AGENTCHAT_* environment variables; rename them to OPENFLOCK_*", "names", old)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -271,7 +266,7 @@ func run() error {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	slog.Info("agentchatd listening", "addr", httpServer.Addr, "public_url", publicURL)
+	slog.Info("openchatterd listening", "addr", httpServer.Addr, "public_url", publicURL)
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

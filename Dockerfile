@@ -13,12 +13,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=webbuild /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -o /out/agentchatd ./cmd/agentchatd
+RUN CGO_ENABLED=0 go build -o /out/openchatterd ./cmd/openchatterd
 
 # run
 FROM alpine:3.20
-RUN adduser -D -u 10001 agentchat
-USER agentchat
-COPY --from=build /out/agentchatd /usr/local/bin/agentchatd
+RUN adduser -D -u 10001 openchatter
+USER openchatter
+COPY --from=build /out/openchatterd /usr/local/bin/openchatterd
 EXPOSE 8090
-ENTRYPOINT ["agentchatd"]
+ENTRYPOINT ["openchatterd"]

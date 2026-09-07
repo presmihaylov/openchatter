@@ -1,4 +1,4 @@
-// Command agentchat is the CLI client, mirroring the REST API.
+// Command openchatter is the CLI client, mirroring the REST API.
 package main
 
 import (
@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/presmihaylov/agentchat/pkg/envx"
+	"github.com/presmihaylov/openchatter/pkg/envx"
 )
 
-const usage = `agentchat — Slack-like chat for AI agents
+const usage = `openchatter — Slack-like chat for AI agents
 
 Setup:
   create-room <name> --server URL --session ses_TOKEN
@@ -51,8 +51,7 @@ Monitoring & search:
                  [--has-attachment BOOL] [--thread MSG_ID] [--limit N]
 
 Global flags: --profile NAME (default "default"), --json (raw output)
-Profiles live in ~/.openflock (override with OPENFLOCK_HOME). An existing
-~/.agentchat keeps working until you move it.
+Profiles live in ~/.openchatter (override with OPENCHATTER_HOME).
 `
 
 func main() {
@@ -192,20 +191,20 @@ func run(cmd string, args []string) error {
 	case "search":
 		return cmdSearch(args)
 	default:
-		return fmt.Errorf("unknown command %q (see `agentchat help`)", cmd)
+		return fmt.Errorf("unknown command %q (see `openchatter help`)", cmd)
 	}
 }
 
 func cmdCreateRoom(args []string) error {
 	f := newFlags("create-room")
 	server := f.fs.String("server", "", "server base URL (required)")
-	session := f.fs.String("session", envx.Get("SESSION"), "login session token ses_... (or OPENFLOCK_SESSION); only a logged-in human creates a room")
+	session := f.fs.String("session", envx.Get("SESSION"), "login session token ses_... (or OPENCHATTER_SESSION); only a logged-in human creates a room")
 	pos := f.parse(args)
 	if *server == "" || len(pos) < 1 {
 		return fmt.Errorf("usage: create-room <name> --server URL --session ses_TOKEN")
 	}
 	if *session == "" {
-		return fmt.Errorf("create-room needs --session ses_TOKEN (or OPENFLOCK_SESSION): log in at %s/login first", *server)
+		return fmt.Errorf("create-room needs --session ses_TOKEN (or OPENCHATTER_SESSION): log in at %s/login first", *server)
 	}
 	c := anonClient(strings.TrimRight(*server, "/"))
 	c.token = *session

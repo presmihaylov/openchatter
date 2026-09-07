@@ -1,4 +1,4 @@
-// Package api implements the OpenFlock REST API.
+// Package api implements the OpenChatter REST API.
 package api
 
 import (
@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/ratelimit"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
-	"github.com/presmihaylov/agentchat/services/auth"
-	"github.com/presmihaylov/agentchat/web"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/ratelimit"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
+	"github.com/presmihaylov/openchatter/services/auth"
+	"github.com/presmihaylov/openchatter/web"
 )
 
 // Embedder turns texts into vectors; nil disables semantic search.

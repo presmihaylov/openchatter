@@ -30,14 +30,14 @@ func TestAuthConfig(t *testing.T) {
 	if err != nil || !reg || ttl.Hours() != 720 {
 		t.Fatalf("defaults: %v %v %v", reg, ttl, err)
 	}
-	reg, ttl, err = authConfig(env(map[string]string{"AGENTCHAT_REGISTRATION_ENABLED": "false", "AGENTCHAT_SESSION_TTL": "48h"}))
+	reg, ttl, err = authConfig(env(map[string]string{"OPENCHATTER_REGISTRATION_ENABLED": "false", "OPENCHATTER_SESSION_TTL": "48h"}))
 	if err != nil || reg || ttl.Hours() != 48 {
 		t.Fatalf("explicit: %v %v %v", reg, ttl, err)
 	}
-	if _, _, err := authConfig(env(map[string]string{"AGENTCHAT_SESSION_TTL": "soon"})); err == nil {
+	if _, _, err := authConfig(env(map[string]string{"OPENCHATTER_SESSION_TTL": "soon"})); err == nil {
 		t.Fatal("a bad TTL must refuse to start")
 	}
-	if _, _, err := authConfig(env(map[string]string{"AGENTCHAT_REGISTRATION_ENABLED": "maybe"})); err == nil {
+	if _, _, err := authConfig(env(map[string]string{"OPENCHATTER_REGISTRATION_ENABLED": "maybe"})); err == nil {
 		t.Fatal("a bad registration flag must refuse to start")
 	}
 }

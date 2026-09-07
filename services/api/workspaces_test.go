@@ -6,14 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/presmihaylov/agentchat/pkg/slug"
+	"github.com/presmihaylov/openchatter/pkg/slug"
 	"net/http"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 // sessionRoom registers a user and creates a room with the session; the

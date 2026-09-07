@@ -142,11 +142,11 @@ const AUDIT = (names, where) => {
   assert(hideX === 'x:16', 'thread hide button: ' + hideX);
   await audit('leaf-hover');
 
-  // 2. hover toolbar on a message you own (react, thread, edit, delete, more) + the reactions row
+  // 2. hover toolbar on a message you own (ack, react, thread, edit, delete, more) + the reactions row
   await page.hover(`#messages .msg[data-id="${second.id}"]`);
   await sleep(150);
   const toolbar = await page.$$eval(`#messages .msg[data-id="${second.id}"] .msg-actions button`, (bs) => bs.map((b) => b.dataset.act + ':' + ((b.querySelector('svg.lucide') || {}).dataset || {}).icon));
-  assert(toolbar.join(',') === 'react:smile-plus,thread:message-square,edit:pencil,delete:trash-2,more:more-vertical', 'toolbar: ' + toolbar.join(','));
+  assert(toolbar.join(',') === 'ack:check,react:smile-plus,thread:message-square,edit:pencil,delete:trash-2,more:more-vertical', 'toolbar: ' + toolbar.join(','));
   const rxAdd = await page.$eval(`#messages .msg[data-id="${root.id}"] .msg-reactions .reaction.add svg`, (s) => s.dataset.icon + ':' + s.classList.contains('rx-add-icon'));
   assert(rxAdd === 'smile-plus:true', 'reaction add button: ' + rxAdd);
   await audit('hover');

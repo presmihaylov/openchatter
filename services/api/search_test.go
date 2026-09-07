@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 func searchBodies(res map[string]any) []string {

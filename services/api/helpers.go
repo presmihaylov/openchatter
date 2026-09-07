@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/openchatter/models"
 )
 
 const maxBodyBytes = 64 * 1024

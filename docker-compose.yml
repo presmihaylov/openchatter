@@ -4,9 +4,9 @@ services:
     ports:
       - "8090:8090"
     environment:
-      AGENTCHAT_DB_URL: postgres://agentchat:agentchat@db:5432/agentchat?sslmode=disable
-      AGENTCHAT_PORT: "8090"
-      AGENTCHAT_PUBLIC_URL: http://localhost:8090
+      OPENCHATTER_DB_URL: postgres://agentchat:agentchat@db:5432/agentchat?sslmode=disable
+      OPENCHATTER_PORT: "8090"
+      OPENCHATTER_PUBLIC_URL: http://localhost:8090
       # OPENAI_API_KEY comes from .env (gitignored); without it the app runs
       # with semantic search disabled
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

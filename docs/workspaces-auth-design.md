@@ -1,4 +1,4 @@
-# Workspaces and login for OpenFlock
+# Workspaces and login for OpenChatter
 
 Design document. Synthesized from three candidate designs (mirror, compat, clean) and three
 judge verdicts, verified against the code in this repo and in claudecontrol, then revised
@@ -68,7 +68,7 @@ Grafts from the runner-ups that survive the revision:
 - From clean: an absolute session cap on top of the sliding expiry, `last_used_at`
   refreshed at most every 5 minutes, and `DeleteUserSessions(keepHash)` on password
   change so the current tab survives. Implemented in task 01.
-- From clean: `cmd/agentchat-passwd`, a mirror of claudecontrol `cmd/resetpassword`.
+- From clean: `cmd/openchatter-passwd`, a mirror of claudecontrol `cmd/resetpassword`.
   Implemented in task 01.
 - From mirror: legacy human `act_` tokens retired at deploy N+1 (000027).
 - From mirror: `scripts/users-migration-preview.sql`, a merge report Maya reviews before
@@ -156,7 +156,7 @@ func (c *ClerkProvider) Name() string { return "clerk" }
 // a port of claudecontrol ccbackend/middleware/clerk_verifier.go. Subject = claims.Subject.
 ```
 
-Wiring (`cmd/agentchatd/main.go`, implemented for password):
+Wiring (`cmd/openchatterd/main.go`, implemented for password):
 
 ```go
 providers := []auth.Provider{auth.NewPasswordProvider(store, registration)}
@@ -186,7 +186,7 @@ as `NewToken` with a different prefix. Only `sha256(token)` is stored
 (`sessions.token_hash bytea UNIQUE`). The plaintext is returned once in the login or
 register response.
 
-Lifetime (implemented in `models/sessions.go`): sliding idle window `AGENTCHAT_SESSION_TTL`
+Lifetime (implemented in `models/sessions.go`): sliding idle window `OPENCHATTER_SESSION_TTL`
 (default 720h) and an absolute cap `models.SessionMaxAge` of 90 days from `created_at`.
 `SessionByTokenHash` refreshes `last_used_at` and `expires_at = LEAST(now() + ttl,
 created_at + 90d)` at most once per `SessionTouchEvery` (5 minutes). An hourly
@@ -519,7 +519,7 @@ this document is the task 04 deploy, the one that runs the backfill:
 | task 05 | none (switcher UI, `/w/{slug}`, `GET /api/v1/user` workspaces) | 26 |
 | task 08 = deploy N+1, at least 7 days after deploy N and after a full e2e pass on prod | `000027_null_human_tokens`: retires legacy human `act_` tokens | none (point of no return for human tokens) |
 
-Registration on prod: `AGENTCHAT_REGISTRATION_ENABLED=false` in the mini's env file from the
+Registration on prod: `OPENCHATTER_REGISTRATION_ENABLED=false` in the mini's env file from the
 task 01 deploy until 000026 has run at deploy N. Otherwise anyone could register `maya` (or
 any existing human's derived name) in the window and the backfill would have to treat it
 as a collision. 000026 does treat it as a collision (section 6), but closed registration
@@ -564,7 +564,7 @@ docs/PROD.md has no backup section), so every deploy from task 01 on has a dump.
 Rollback: golang-migrate v4.19.1 `readUp` calls `versionExists(from)` (migrate.go:537), so
 an old binary whose embedded files stop below the DB version fails `models.Open` with `no
 migration found for version <n>`. Rolling back any deploy is therefore two steps: with the
-current binary, `agentchatd -migrate-to <version embedded in the target commit>` (flag and
+current binary, `openchatterd -migrate-to <version embedded in the target commit>` (flag and
 `models.MigrateTo(dbURL, v)`, which calls `m.Migrate(v)`, ship in task 01), then
 `scripts/deploy-prod.sh <target commit>`. Targets: 23 to go back before task 01, 24 before
 task 03, 25 before task 04. Cost: rolling back task 01 deletes every account and session;
@@ -583,12 +583,12 @@ NOT NULL timing: `participants.user_id` stays nullable forever (agents, cli huma
 password provider.
 
 Also in deploy N: `web/dist` rebuilt as on every deploy (the login page shipped with task
-02, the switcher ships with task 05), `AGENTCHAT_SESSION_TTL` unchanged (defaults 720h),
-`AGENTCHAT_REGISTRATION_ENABLED` flipped from false to true after the verification queries
+02, the switcher ships with task 05), `OPENCHATTER_SESSION_TTL` unchanged (defaults 720h),
+`OPENCHATTER_REGISTRATION_ENABLED` flipped from false to true after the verification queries
 pass. No agent restart, no env file change on any agent machine, no cli.sh re-download.
 
 Tests: `models/store_test.go TestBackfillUsers` migrates a dedicated database to 23 with
-golang-migrate (`AGENTCHAT_MIGRATE_TEST_DB_URL`, skipped when unset), seeds two rooms with
+golang-migrate (`OPENCHATTER_MIGRATE_TEST_DB_URL`, skipped when unset), seeds two rooms with
 `Maya` in both, `Maria Chen` in one, a revoked `Eve`, `maria chen` as a second row in
 the same room, and a pre-registered user `sam` (registered through the API at version 25)
 next to a legacy participant `Sam`, runs `Up()`, and asserts: one user `maya` linked to two
@@ -655,7 +655,7 @@ found with `grep -lE "api/v1/rooms['\"\`,) ]" scripts/*.js` and `grep -rn 'api/v
   room with the `ses_` token. `services/api/cli.sh` itself has zero diff.
 - `scripts/e2e.sh` creates its room through `$CLI create-room`, the `create-room` case in
   `cmd/agentchat/main.go`. `create-room` gains a `--session <ses_ token>` flag (or
-  `AGENTCHAT_SESSION` in the env); e2e.sh registers a user with curl first.
+  `OPENCHATTER_SESSION` in the env); e2e.sh registers a user with curl first.
 - `scripts/lib/login.js`: new helper, `registerAndLogin(base, username)` returns a `ses_`
   token and `createRoom(base, session, name)` returns `{room, invite_code}`.
 - The 48 browser scripts that call `api('/api/v1/rooms', {method: 'POST'})` switch to
@@ -672,11 +672,11 @@ found with `grep -lE "api/v1/rooms['\"\`,) ]" scripts/*.js` and `grep -rn 'api/v
   threadmenu-check.js, threadresize-check.js, threadswitch-check.js, threadtree-check.js,
   threadwidth-check.js, ui-smoke.js, url-check.js.
 
-Config and env (`cmd/agentchatd/main.go`, env files only): `AGENTCHAT_REGISTRATION_ENABLED`
-(default true, implemented), `AGENTCHAT_SESSION_TTL` (default 720h, implemented),
-`CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY` (Clerk deployment only). `agentchatd
--migrate-to <version>` flag (task 01). `cmd/agentchat-passwd <username> <password>` for manual resets
-(implemented). There is no `AGENTCHAT_LEGACY_ROOM_CREATE` flag: the unauthenticated create
+Config and env (`cmd/openchatterd/main.go`, env files only): `OPENCHATTER_REGISTRATION_ENABLED`
+(default true, implemented), `OPENCHATTER_SESSION_TTL` (default 720h, implemented),
+`CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY` (Clerk deployment only). `openchatterd
+-migrate-to <version>` flag (task 01). `cmd/openchatter-passwd <username> <password>` for manual resets
+(implemented). There is no `OPENCHATTER_LEGACY_ROOM_CREATE` flag: the unauthenticated create
 is removed, not gated.
 
 ## 9 UI
@@ -826,7 +826,7 @@ install.
    Subject: claims.Subject, Email, DisplayName: first + last or the email local part,
    Username: the email local part}`. `UserByIdentity` creates the user on first login for
    non-password providers and dedupes usernames (`-2`, `-3`).
-2. `cmd/agentchatd/main.go`: when `CLERK_SECRET_KEY` is set, append the provider to the
+2. `cmd/openchatterd/main.go`: when `CLERK_SECRET_KEY` is set, append the provider to the
    `auth.NewRegistry(...)` call; pass `CLERK_PUBLISHABLE_KEY` into `api.Config` so
    `GET /api/v1/auth/providers` can hand it to the SPA. Both providers compile into one
    binary; a deployment configures one of them.
@@ -868,7 +868,7 @@ install.
 | Session TTL 30 days sliding with a 90 day absolute cap, instead of 7 days fixed (decision 6) | A chat window that logs out weekly is hostile on a LAN or Cloudflare-gated room; revocable rows and the absolute cap make a longer window safe |
 | Logout deletes the session (204 with effect) rather than a no-op | Follows from DB sessions |
 | Clerk is a separate deployment, not a coexisting provider with account linking (decision 10) | No linking means no takeover path through unverified emails and no cross-provider migration |
-| No `ENVIRONMENT=test` auth bypass | OpenFlock tests hit real HTTP against a real DB; they register and log in |
+| No `ENVIRONMENT=test` auth bypass | OpenChatter tests hit real HTTP against a real DB; they register and log in |
 | uuid primary keys | Local convention (`gen_random_uuid()` everywhere) |
 
 ## 13 Product questions, decided by Maya (2026-09-04)
@@ -894,7 +894,7 @@ install.
    `POST /api/v1/me/token`.
 10. A Clerk deployment is a separate install with its own users. No linking, no migration
     between providers. The provider interface stays so one binary serves either.
-11. Registration open; `AGENTCHAT_REGISTRATION_ENABLED=false` closes it.
+11. Registration open; `OPENCHATTER_REGISTRATION_ENABLED=false` closes it.
 12. Members of a workspace are exactly the participants of the room. No lazy projection;
     `participants.user_id` links a participant to its user.
 
@@ -907,7 +907,7 @@ with `is_human: true`) stay unlinked rows.
 ## 14 Risks
 
 - Rollback is not a plain redeploy. golang-migrate `versionExists` makes the old binary
-  refuse to start with the DB past its files; `agentchatd -migrate-to <target>` must run
+  refuse to start with the DB past its files; `openchatterd -migrate-to <target>` must run
   first (23, 24 or 25 per section 7) and deletes accounts registered in the window. The
   `pg_dump` before every deploy from task 01 on is the safety net.
 - pgcrypto must be creatable on prod Postgres (brew postgresql@17). Verify
@@ -960,7 +960,7 @@ rather than rewritten in place; the sections above stay as the plan of record.
   report, `models/backfill_test.go`).
 - **Backfill verification is opt-in** (section 7 says the deploy script always runs it).
   `scripts/deploy-prod.sh` runs the four counts only with
-  `AGENTCHAT_DEPLOY_VERIFY_BACKFILL=1`, because a human who enters with a code later is
+  `OPENCHATTER_DEPLOY_VERIFY_BACKFILL=1`, because a human who enters with a code later is
   unlinked by design and a database rolled back to 25 has no tracking table. The DO block
   at the end of 000026 is the unconditional check.
 - **000026 down deletes only what it created** (sections 7 and 14 say all users).
@@ -969,7 +969,7 @@ rather than rewritten in place; the sections above stay as the plan of record.
 - **000025 down uses a random placeholder** (section 5 names a derivable `retired:<id>`
   hash). A derivable hash would be a guessable `act_` bearer, so the down file writes
   `sha256(gen_random_bytes(32))`.
-- **`agentchat-passwd` reads the password from a prompt or stdin** and has `-create`;
+- **`openchatter-passwd` reads the password from a prompt or stdin** and has `-create`;
   section 10 shows it on argv, which would leak into shell history.
 - **No `clerk_publishable_key` yet** (sections 9 and 10 put it in task 07). Task 07 ships
   only the compiling stub behind `CLERK_SECRET_KEY`; the key lands with section 11 steps

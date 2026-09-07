@@ -11,15 +11,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 // scratchDBURL creates a throwaway database for a schema-level fixture; the
 // shared dev database cannot be moved to 25 while other packages run.
 func scratchDBURL(t *testing.T) string {
 	t.Helper()
-	base := os.Getenv("AGENTCHAT_TEST_DB_URL")
+	base := os.Getenv("OPENCHATTER_TEST_DB_URL")
 	if base == "" {
 		base = "postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable"
 	}

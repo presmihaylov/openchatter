@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/imgvariant"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/imgvariant"
 )
 
 func (s *Server) handleGetMe(w http.ResponseWriter, r *http.Request, p models.Participant) {

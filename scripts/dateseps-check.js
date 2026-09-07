@@ -15,7 +15,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { newRoom, enterAs, sleep } = require('./lib/login.js');
 const SERVER = process.env.SERVER || 'http://localhost:8095';
-const DB_URL = process.env.AGENTCHAT_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
+const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
 const OUT = process.env.OUT || os.tmpdir();
 
 async function api(p, opts = {}) {

@@ -1,6 +1,6 @@
 -- Read-only preview of migration 000026 (docs/workspaces-auth-design.md section 7).
 -- Runs on schema 25, before the task 04 deploy:
---   psql "$AGENTCHAT_DB_URL" -f scripts/users-migration-preview.sql
+--   psql "$OPENCHATTER_DB_URL" -f scripts/users-migration-preview.sql
 -- Only temp objects are created; nothing persists past the psql session.
 -- The derivation below is a verbatim copy of the human_rows CTE in
 -- migrations/000026_backfill_users.up.sql; keep the two in sync.

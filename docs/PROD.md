@@ -13,28 +13,47 @@ and only moves when you run the deploy script.
 
 ## Layout on the mini
 
-- `~/agentchat-prod/bin/agentchatd-<commit>` — one binary per deployed commit;
-  `agentchatd` is a symlink to the live one (that symlink IS the version pin).
-- `~/agentchat-prod/env` — `AGENTCHAT_DB_URL`, `AGENTCHAT_PORT=8100`,
-  `AGENTCHAT_PUBLIC_URL`. Mode 0600; holds the db password. Add
+- `~/openchatter-prod/bin/openchatterd-<commit>` — one binary per deployed commit;
+  `openchatterd` is a symlink to the live one (that symlink IS the version pin).
+- `~/openchatter-prod/env` — `OPENCHATTER_DB_URL`, `OPENCHATTER_PORT=8100`,
+  `OPENCHATTER_PUBLIC_URL`. Mode 0600; holds the db password. Add
   `OPENAI_API_KEY` here to enable semantic search (currently disabled).
   To expose the room to chosen outsiders, add the `CLOUDFLARE_TUNNEL` block
   from `docs/CLOUDFLARE.md`.
-  Human login knobs, both optional: `AGENTCHAT_REGISTRATION_ENABLED`
+  Human login knobs, both optional: `OPENCHATTER_REGISTRATION_ENABLED`
   (default `true`; `false` returns 403 on `/register`, logins still work) and
-  `AGENTCHAT_SESSION_TTL` (a Go duration, default `720h`; the sliding session
+  `OPENCHATTER_SESSION_TTL` (a Go duration, default `720h`; the sliding session
   lifetime, capped at 90 days absolute). A bad value refuses to start.
   `CLERK_SECRET_KEY` lists the Clerk provider; it is a stub that refuses
   every login with 501 until the verifier lands, and a Clerk install is a
   separate deployment with its own users. Never set it on this prod.
-- `~/agentchat-prod/logs/agentchatd.log` — app log.
-- `~/agentchat-prod/backups/agentchat-<utc stamp>-pre-<commit>.dump` — a
+- `~/openchatter-prod/logs/openchatterd.log` — app log.
+- `~/openchatter-prod/backups/openchatter-<utc stamp>-pre-<commit>.dump` — a
   `pg_dump -Fc` the deploy script takes before every binary swap. The newest
   10 are kept. Restore with `pg_restore --clean --if-exists -d <db url> <file>`.
-- `~/Library/LaunchAgents/com.agentchat.prod.plist` — `RunAtLoad` +
+- `~/Library/LaunchAgents/com.openchatter.prod.plist` — `RunAtLoad` +
   `KeepAlive`: starts at login and restarts on crash. The prod host auto-logs-in
   as the service user, which is what makes this survive reboots; if auto-login is
   ever turned off, convert to a LaunchDaemon.
+
+## The one-time rename (agentchat to openchatter)
+
+The host was laid out as `~/agentchat-prod` under the label `com.agentchat.prod`
+with `AGENTCHAT_*` in its env file. It moved once, by hand, and this section is
+the record of that move; a fresh host never needs it.
+
+```sh
+cp -a ~/agentchat-prod/env ~/agentchat-prod/env.bak-preopenchatter-$(date -u +%Y%m%dT%H%M%SZ)
+mv ~/agentchat-prod ~/openchatter-prod
+ln -s ~/openchatter-prod ~/agentchat-prod      # the old plist keeps resolving until it is gone
+perl -pi -e 's/^AGENTCHAT_/OPENCHATTER_/; s{agentchat-prod}{openchatter-prod}g' ~/openchatter-prod/env
+# write ~/Library/LaunchAgents/com.openchatter.prod.plist (same keys, new label, new paths)
+launchctl bootout gui/$(id -u)/com.agentchat.prod
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openchatter.prod.plist
+```
+
+The old service must stay up until the new binary is in place, so run the deploy
+script first and swap the label last: they both bind port 8100.
 
 Postgres runs via `brew services start postgresql@17` (also a login item).
 Migrations are embedded in the binary and run on startup, so a deploy is just
@@ -55,11 +74,11 @@ scripts/deploy-prod.sh <commit>   # deploys a specific commit
 The script first builds the web UI (`npm ci && npm run build` in `web/`, so
 node is a build-time dependency on the dev machine only; nothing new runs on
 the mini), then builds `darwin/arm64` from a clean checkout of that commit, ships
-it as `agentchatd-<commit>`, atomically repoints the symlink, kickstarts the
+it as `openchatterd-<commit>`, atomically repoints the symlink, kickstarts the
 service, and curls `/healthz`.
 
 Before the binary swap it takes a `pg_dump -Fc` on the mini
-(`backups/agentchat-<utc stamp>-pre-<commit>.dump`) and aborts if the dump
+(`backups/openchatter-<utc stamp>-pre-<commit>.dump`) and aborts if the dump
 fails. That dump is the safety net for every rollback below: a down migration
 deletes data, the dump does not. A deploy that crosses a migration therefore
 always has a restore point from just before it.
@@ -72,8 +91,8 @@ crosses a migration is two steps, run with the currently deployed binary first:
 
 ```sh
 # on the mini, with the env file loaded
-set -a && source ~/agentchat-prod/env && set +a
-~/agentchat-prod/bin/agentchatd -migrate-to <version embedded in the target commit>
+set -a && source ~/openchatter-prod/env && set +a
+~/openchatter-prod/bin/openchatterd -migrate-to <version embedded in the target commit>
 # then, from the dev machine
 scripts/deploy-prod.sh <target commit>
 ```
@@ -129,8 +148,8 @@ untouched.
 
 1. Preview, read-only, on the mini with the current (schema 25) binary:
    ```sh
-   set -a && source ~/agentchat-prod/env && set +a
-   /opt/homebrew/opt/postgresql@17/bin/psql "$AGENTCHAT_DB_URL" -f users-migration-preview.sql
+   set -a && source ~/openchatter-prod/env && set +a
+   /opt/homebrew/opt/postgresql@17/bin/psql "$OPENCHATTER_DB_URL" -f users-migration-preview.sql
    ```
    (`scp scripts/users-migration-preview.sql <prod host>:` first.) Review the
    merge report (one username, several rows), the collision report (a derived
@@ -139,16 +158,16 @@ untouched.
    the operator linked by hand, e.g. `maya`; their unlinked rows in other rooms
    merge into them). Fix a wrong merge by renaming the participant before the
    deploy.
-2. `AGENTCHAT_DEPLOY_VERIFY_BACKFILL=1 scripts/deploy-prod.sh <commit>`. With
+2. `OPENCHATTER_DEPLOY_VERIFY_BACKFILL=1 scripts/deploy-prod.sh <commit>`. With
    the flag set, the script runs the four verification counts through psql on
    the mini after the health check and exits non-zero when any is not 0. Set
    the flag only on this deploy: humans who join with an invite code later are
    unlinked by design, so the first count is not an invariant afterwards.
-3. Reopen registration: remove the `AGENTCHAT_REGISTRATION_ENABLED=false` line
-   from `~/agentchat-prod/env` (the default is true) and
-   `launchctl kickstart -k gui/$(id -u)/com.agentchat.prod`.
+3. Reopen registration: remove the `OPENCHATTER_REGISTRATION_ENABLED=false` line
+   from `~/openchatter-prod/env` (the default is true) and
+   `launchctl kickstart -k gui/$(id -u)/com.openchatter.prod`.
 
-Rollback target is 25: `agentchatd -migrate-to 25` removes exactly the
+Rollback target is 25: `openchatterd -migrate-to 25` removes exactly the
 accounts 000026 created (tracked in `users_backfill_000026`) and their links;
 pre-linked and registered users stay. Then deploy the task 03 commit (without
 the verify flag: the tracking table is gone).
@@ -156,10 +175,10 @@ the verify flag: the tracking table is gone).
 ## Ops crib sheet (on the mini)
 
 ```sh
-tail -f ~/agentchat-prod/logs/agentchatd.log
-launchctl kickstart -k gui/$(id -u)/com.agentchat.prod   # restart
-launchctl bootout   gui/$(id -u)/com.agentchat.prod      # stop
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentchat.prod.plist  # start
+tail -f ~/openchatter-prod/logs/openchatterd.log
+launchctl kickstart -k gui/$(id -u)/com.openchatter.prod   # restart
+launchctl bootout   gui/$(id -u)/com.openchatter.prod      # stop
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openchatter.prod.plist  # start
 /opt/homebrew/opt/postgresql@17/bin/psql -h localhost agentchat  # db shell
 ```
 

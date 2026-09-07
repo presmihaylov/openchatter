@@ -297,7 +297,7 @@ func runWatcherPosting(t *testing.T, script, home string, post func()) string {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(filepath.Join(home, ".openflock", "room.alice.cursor"))
+	os.Remove(filepath.Join(home, ".openchatter", "room.alice.cursor"))
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", path)
@@ -329,10 +329,10 @@ func TestWatcherTemplatePassesAccessGate(t *testing.T) {
 	script := watcherTemplate(t, srv.URL)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	write := func(body string) {
 		if err := os.WriteFile(envFile, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -413,11 +413,11 @@ func TestWatcherTemplateNagsAboutUnackedAsks(t *testing.T) {
 	script := watcherTemplate(t, srv.URL)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
-	env := "SERVER=" + srv.URL + "\nTOKEN=" + alice.token + "\nOPENFLOCK_ACK_NAG_SECS=1\n"
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
+	env := "SERVER=" + srv.URL + "\nTOKEN=" + alice.token + "\nOPENCHATTER_ACK_NAG_SECS=1\n"
 	if err := os.WriteFile(envFile, []byte(env), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -456,10 +456,10 @@ func TestWatcherTemplateHearsOwnThreads(t *testing.T) {
 	root := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my topic"}, 201)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -499,10 +499,10 @@ func TestWatcherTemplateDropsReactions(t *testing.T) {
 	mine := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my post"}, 201)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -536,10 +536,10 @@ func TestWatcherTemplateRootBroadcastsOnly(t *testing.T) {
 	root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's own topic"}, 201)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -572,10 +572,10 @@ func TestWatcherTemplateRefusesWrongName(t *testing.T) {
 		t.Fatalf("could not recase ME in the template:\n%s", script)
 	}
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -602,10 +602,10 @@ func TestWatcherTemplateDropsSystemEntries(t *testing.T) {
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's part", "thread_root_id": rootID}, 201)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -626,14 +626,13 @@ func TestWatcherTemplateDropsSystemEntries(t *testing.T) {
 
 // TestWatcherTemplateWakeHookOptIn: a second prompt per event is a full extra
 // turn under Monitor, so the template only runs a wake hook when
-// OPENFLOCK_WAKE_CMD (or the retiring AGENTCHAT_WAKE_CMD) is set, and names no
-// harness; the doc says so.
+// OPENCHATTER_WAKE_CMD is set, and names no harness; the doc says so.
 func TestWatcherTemplateWakeHookOptIn(t *testing.T) {
 	srv, _ := newTestServer(t)
 	script := watcherTemplate(t, srv.URL)
-	if !strings.Contains(script, `WAKE_CMD="${OPENFLOCK_WAKE_CMD:-${AGENTCHAT_WAKE_CMD:-}}"`) ||
+	if !strings.Contains(script, `WAKE_CMD="${OPENCHATTER_WAKE_CMD:-}"`) ||
 		!strings.Contains(script, `if [ -n "$WAKE_CMD" ]`) {
-		t.Fatalf("wake hook is not gated on OPENFLOCK_WAKE_CMD, with the old name as fallback:\n%s", script)
+		t.Fatalf("wake hook is not gated on OPENCHATTER_WAKE_CMD:\n%s", script)
 	}
 	if strings.Contains(strings.ToLower(script), "herdr") {
 		t.Fatalf("template is harness-specific:\n%s", script)
@@ -694,10 +693,10 @@ func gatedWatcher(t *testing.T) (setDown func(bool), failed func() int, post fun
 		script = strings.ReplaceAll(script, from, to)
 	}
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+gate.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -799,10 +798,10 @@ func TestWatcherTemplateDropsBenignEvents(t *testing.T) {
 		t.Fatal("could not empty WATCH in the template")
 	}
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
 	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

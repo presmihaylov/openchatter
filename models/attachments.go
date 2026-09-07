@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/presmihaylov/agentchat/pkg/imgvariant"
+	"github.com/presmihaylov/openchatter/pkg/imgvariant"
 )
 
 // roomStorageCap bounds total attachment bytes per room so one participant

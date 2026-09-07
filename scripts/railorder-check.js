@@ -127,7 +127,7 @@ const errors = [];
   const notes = await page.evaluate(() => window.__notes);
   assert(notes.length === 0, 'a muted workspace notified: ' + JSON.stringify(notes));
   // the title never counts a muted workspace
-  assert((await page.title()) === 'OpenFlock | rail one', 'muted title: ' + await page.title());
+  assert((await page.title()) === 'OpenChatter | rail one', 'muted title: ' + await page.title());
 
   step = '7';
   // 7. a muted workspace that is not the open one keeps its count, in gray: mute two, post an @mention there
@@ -143,12 +143,12 @@ const errors = [];
   assert(gray.muted && gray.count && !gray.mention && gray.bg === 'rgb(138, 143, 152)', 'muted pill: ' + JSON.stringify(gray));
   const labelMuted = await page.$eval('#rail-list .rail-item[data-slug="' + slugs[1] + '"]', (a) => a.getAttribute('aria-label'));
   assert(labelMuted === 'rail two, muted, 2 unread', 'muted aria-label: ' + labelMuted);
-  assert((await page.title()) === 'OpenFlock | rail one', 'title counted a muted workspace: ' + await page.title());
+  assert((await page.title()) === 'OpenChatter | rail one', 'title counted a muted workspace: ' + await page.title());
   await shot(page, 'muted.png');
   // an unmuted third with a plain post: neutral pill and the title counts it
   await postIn(slugs[2], 'news in three');
   await refocus(page);
-  await page.waitForFunction(() => document.title === '(1) OpenFlock | rail one', { timeout: 8000 });
+  await page.waitForFunction(() => document.title === '(1) OpenChatter | rail one', { timeout: 8000 });
 
   step = '8';
   // 8. Personal settings carry no workspace mute any more; the workspace-name
@@ -170,7 +170,7 @@ const errors = [];
   assert(after.find((w) => w.slug === slugs[1]).muted === true, 'the other mute was lost');
   // back in the room: one's mention in #side now counts in the title
   await openWorkspace(page, SERVER, session, slugs[0]);
-  await page.waitForFunction(() => document.title === '(2) OpenFlock | rail one', { timeout: 8000 });
+  await page.waitForFunction(() => document.title === '(2) OpenChatter | rail one', { timeout: 8000 });
   assert(!(await page.$eval('#rail-list .rail-item[data-slug="' + slugs[0] + '"]', (a) => a.classList.contains('is-muted'))), 'one still muted in the rail');
 
   await browser.close();

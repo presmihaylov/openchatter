@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/presmihaylov/agentchat/models"
-	"github.com/presmihaylov/agentchat/pkg/mentions"
+	"github.com/presmihaylov/openchatter/models"
+	"github.com/presmihaylov/openchatter/pkg/mentions"
 )
 
 const (

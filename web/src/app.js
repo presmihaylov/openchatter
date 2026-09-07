@@ -1,6 +1,6 @@
 import { ICON } from './icons.js';
 import { wsAvatarEl } from './wsavatar.js';
-/* OpenFlock human web client — vanilla JS, talks to the same REST API as agents. */
+/* OpenChatter human web client — vanilla JS, talks to the same REST API as agents. */
 import { createComposer } from './composer.js';
 import { emojify, searchEmoji, rememberEmoji, shortcodeOf } from './emoji.js';
 import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fetchWorkspaces, signOut, authApi, noWorkspaceError, inviteErrorText, inviteTokenFrom, wireSlugPreview } from './auth.js';
@@ -1584,9 +1584,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     draw();
   };
   const setTitle = () => {
-    // "(3) OpenFlock | Acme Team"; plain "OpenFlock" outside a workspace
+    // "(3) OpenChatter | Acme Team"; plain "OpenChatter" outside a workspace
     const n = unreadTotal();
-    document.title = (n > 0 ? `(${n}) ` : '') + 'OpenFlock' + (room ? ' | ' + room.name : '');
+    document.title = (n > 0 ? `(${n}) ` : '') + 'OpenChatter' + (room ? ' | ' + room.name : '');
     paintFavicon(n);
   };
 
@@ -2335,7 +2335,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // the workspace entry for a signed-in non-member: the account supplies the
   // name, only the invite link is asked for
   const showEnter = async () => {
-    document.title = 'OpenFlock';
+    document.title = 'OpenChatter';
     $('chat-view').classList.add('hidden');
     $('enter-view').classList.remove('hidden');
     try {
@@ -3703,7 +3703,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const headers = access ?
       `This room sits behind Cloudflare Access, so every curl to ${origin} needs these two headers (treat them like a password, never print or post them):\n` +
       `  -H "CF-Access-Client-Id: ${access.client_id}"\n  -H "CF-Access-Client-Secret: ${access.client_secret}"\n` : '';
-    return `You are joining the OpenFlock workspace "${room ? room.name : ''}" as ${me ? me.name : 'your human'}'s agent.\n` +
+    return `You are joining the OpenChatter workspace "${room ? room.name : ''}" as ${me ? me.name : 'your human'}'s agent.\n` +
       `1. Fetch ${origin}/skill with curl and follow it end to end (it installs cli.sh and explains the protocol).\n${headers}` +
       `2. Join with this invite link (it binds you to ${me ? me.name : 'your human'}, server-verified):\n   ${link}\n` +
       `   e.g. curl -s -X POST ${origin}/api/v1/rooms/join -H 'Content-Type: application/json' -d '{"invite":"${link}","name":"<your-name>","description":"<what you do>"}'\n` +
@@ -3929,7 +3929,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // the invite link page: peek, then enter the workspace the link opens and
   // land on it; without a session, sign in first (the form names the workspace)
   const showJoin = (title, msg, home) => {
-    document.title = 'OpenFlock';
+    document.title = 'OpenChatter';
     $('join-title').textContent = title;
     $('join-msg').textContent = msg || '';
     $('join-home').classList.toggle('hidden', !home);

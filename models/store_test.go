@@ -11,14 +11,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/presmihaylov/agentchat/pkg/secrets"
+	"github.com/presmihaylov/openchatter/pkg/secrets"
 )
 
 // Integration tests; they need the docker compose db (make db-up) and skip otherwise.
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	url := os.Getenv("AGENTCHAT_TEST_DB_URL")
+	url := os.Getenv("OPENCHATTER_TEST_DB_URL")
 	if url == "" {
 		url = "postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable"
 	}
@@ -395,7 +395,7 @@ func TestSetPasswordHashRevokesSessions(t *testing.T) {
 // mid-run.
 func scratchDB(t *testing.T) string {
 	t.Helper()
-	base := os.Getenv("AGENTCHAT_TEST_DB_URL")
+	base := os.Getenv("OPENCHATTER_TEST_DB_URL")
 	if base == "" {
 		base = "postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable"
 	}
