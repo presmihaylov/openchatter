@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -98,6 +98,8 @@ REMINDERS (yours only; a fire arrives like a mention, so the watcher wakes you)
 
 FLAGS
   --json                on any read command, print raw JSON
+  --utc                 print times in UTC with a Z; the default is your own
+                        zone with its real offset, like 14:02+03:00
   --limit N             read/mentions: how many (default 30)
   --since <seq|time>    mentions: after this event cursor (default: last seen)
                         read: only messages after this RFC3339 timestamp
@@ -270,6 +272,27 @@ json_pretty() { printf '%s' "$1" | python3 -m json.tool; }
 
 # ---------- rendering ----------
 
+# Every printed time. The server sends its timestamps with a real UTC offset, so
+# the old trick of slicing the string and stapling a "Z" on printed local time
+# under a UTC label. Render in the reader's own zone with its true offset, or in
+# real UTC when --utc set OC_UTC.
+WHEN_PY='
+import os as _os
+from datetime import datetime as _dt, timezone as _tz
+def when_str(v, full=False):
+    try:
+        t = _dt.fromisoformat((v or "").replace("Z", "+00:00"))
+    except ValueError:
+        return (v or "")[:16].replace("T", " ")
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_tz.utc)
+    if _os.environ.get("OC_UTC"):
+        return t.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%MZ" if full else "%m-%d %H:%MZ")
+    t = t.astimezone()
+    off = t.strftime("%z") or "+0000"
+    return t.strftime("%Y-%m-%d %H:%M" if full else "%m-%d %H:%M") + off[:3] + ":" + off[3:]
+'
+
 # The one line that says whether a message is a root or a reply, and what to
 # pass to `reply`. Shared by every read surface so they cannot disagree.
 THREAD_TAG_PY='
@@ -287,12 +310,12 @@ def thread_tag(m):
 
 # print_messages JSON EXPR — EXPR selects the message list out of the body
 print_messages() {
-  printf '%s' "$1" | python3 -c "$THREAD_TAG_PY"'
+  printf '%s' "$1" | python3 -c "$WHEN_PY$THREAD_TAG_PY"'
 import sys, json, textwrap
 d = json.load(sys.stdin)
 msgs = eval(sys.argv[1], {"d": d}) or []
 for m in msgs:
-    when = m.get("created_at", "")[5:16].replace("T", " ") + "Z"
+    when = when_str(m.get("created_at"))
     tags = [thread_tag(m)]
     if m.get("is_broadcast"): tags.append("BROADCAST")
     for a in m.get("attachments") or []:
@@ -639,11 +662,11 @@ print(urllib.parse.urlencode(q))
   api GET "/api/v1/search/hybrid?$qs"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   [ "$(json_str "$RESP" 'd.get("semantic")')" = "False" ] && printf 'note: semantic search is off on this server; text matches only\n' >&2
-  printf '%s' "$RESP" | python3 -c "$THREAD_TAG_PY"'
+  printf '%s' "$RESP" | python3 -c "$WHEN_PY$THREAD_TAG_PY"'
 import sys, json, textwrap
 d = json.load(sys.stdin)
 for m in d.get("results") or []:
-    when = m.get("created_at", "")[5:16].replace("T", " ") + "Z"
+    when = when_str(m.get("created_at"))
     tags = [thread_tag(m)]
     if m.get("via") == "semantic": tags.append("semantic")
     print("%s  %s  [%s]  (%s)" % (when, m.get("author_name", "?"), m.get("id", ""), ", ".join(tags)))
@@ -676,14 +699,8 @@ cmd_mentions() {
 # TRAILER (optional) prints last, from the same process: a reader that quits early
 # (grep -q under pipefail) must not SIGPIPE a second writer.
 print_events() {
-  printf '%s' "$1" | ME="$2" TRAILER="${3:-}" python3 -c "$THREAD_TAG_PY"'
+  printf '%s' "$1" | ME="$2" TRAILER="${3:-}" python3 -c "$WHEN_PY$THREAD_TAG_PY"'
 import sys, json, textwrap, os
-def utc(v):
-    from datetime import datetime, timezone
-    try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-    except ValueError:
-        return v[:16].replace("T", " ")
 d = json.load(sys.stdin)
 me = os.environ.get("ME", "")
 seen = 0
@@ -691,9 +708,9 @@ for e in d.get("events", []):
     if e.get("type") == "reminder.fired":
         m = e.get("payload", {})
         seen += 1
-        when = (m.get("fired_at") or "")[5:16].replace("T", " ") + "Z"
+        when = when_str(m.get("fired_at"))
         nxt = m.get("next_fire_at")
-        tail = "next %s" % utc(nxt) if nxt else "one-time, done"
+        tail = "next %s" % when_str(nxt, True) if nxt else "one-time, done"
         print("%s  REMINDER  [%s]  seq %s  (%s, %s)" % (when, m.get("reminder_id", ""), e.get("seq", "?"), m.get("schedule", ""), tail))
         for line in (m.get("text") or "").splitlines() or [""]:
             print(textwrap.indent(line, "    "))
@@ -704,7 +721,7 @@ for e in d.get("events", []):
     m = e.get("payload", {})
     seen += 1
     why = "broadcast" if m.get("is_broadcast") else ("mentions you" if me in (m.get("mentions") or []) else "thread you are in")
-    when = m.get("created_at", "")[5:16].replace("T", " ") + "Z"
+    when = when_str(m.get("created_at"))
     print("%s  %s  [%s]  seq %s  (%s, %s)" % (when, m.get("author_name", "?"), m.get("id", ""), e.get("seq", "?"), why, thread_tag(m)))
     for line in (m.get("body") or "").splitlines() or [""]:
         print(textwrap.indent(line, "    "))
@@ -867,19 +884,13 @@ cmd_join() {
 # ---------- flags ----------
 
 print_reminders() {
-  printf '%s' "$1" | python3 -c '
+  printf '%s' "$1" | python3 -c "$WHEN_PY"'
 import json, sys
-def utc(v):
-    from datetime import datetime, timezone
-    try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-    except ValueError:
-        return v[:16].replace("T", " ")
 d = json.load(sys.stdin)
 rs = d.get("reminders") if isinstance(d, dict) and "reminders" in d else [d]
 if not rs:
     print("no reminders"); sys.exit(0)
-def ts(v): return utc(v) if v else ""
+def ts(v): return when_str(v, True) if v else ""
 for r in rs:
     nxt = ts(r.get("next_fire_at")) if r.get("next_fire_at") else "done"
     last = ts(r.get("last_fired_at")) if r.get("last_fired_at") else "never"
@@ -1051,6 +1062,7 @@ while [ $# -gt 0 ]; do
     --force-mentions) FORCE_MENTIONS=1 ;;
     --new-topic) NEW_TOPIC=1 ;;
     --peek) PEEK=1 ;;
+    --utc) export OC_UTC=1 ;;
     --code) WRAP_CODE=1 ;;
     --code=*) WRAP_CODE=1; WRAP_LANG="${1#--code=}" ;;
     --force) FORCE=1 ;;

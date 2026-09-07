@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -910,5 +911,76 @@ func TestCLIRefusesUnfencedDiff(t *testing.T) {
 	// --help names the rule where send and reply are described
 	if out, _ := run("--help"); !strings.Contains(out, "fence") || !strings.Contains(out, "--code") {
 		t.Fatalf("--help does not mention fencing or --code:\n%s", out)
+	}
+}
+
+// The server sends timestamps with its own UTC offset. The CLI used to slice
+// that string and staple a "Z" on it, so a message sent 11:02Z read as 14:02Z
+// on a +03:00 host: an agent doing arithmetic on it lands three hours out.
+// Local time now carries its real offset, and --utc gives true Z.
+func TestCLIPrintsHonestTimes(t *testing.T) {
+	srv, _ := newTestServer(t)
+	defer srv.Close()
+	_, alice, _ := setupRoom(t, srv.URL)
+	resp, err := http.Get(srv.URL + "/cli.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cli.sh")
+	if err := os.WriteFile(path, raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(dir, "room.env")
+	if err := os.WriteFile(envFile, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sent := time.Now().UTC()
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "what time is it"}, 201)
+
+	run := func(tz string, args ...string) string {
+		cmd := exec.Command("bash", append([]string{path, "--env", envFile}, args...)...)
+		cmd.Env = append(os.Environ(), "TZ="+tz)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("cli %v under TZ=%s: %v\n%s", args, tz, err, out)
+		}
+		return string(out)
+	}
+	// "09-07 14:02+03:00" or "09-07 11:02Z"
+	stamp := regexp.MustCompile(`(\d\d)-(\d\d) (\d\d):(\d\d)(Z|[+-]\d\d:\d\d)`)
+	first := func(out string) []string {
+		m := stamp.FindStringSubmatch(out)
+		if m == nil {
+			t.Fatalf("no timestamp in:\n%s", out)
+		}
+		return m
+	}
+
+	tokyo := first(run("Asia/Tokyo", "read", "general"))
+	utc := first(run("Asia/Tokyo", "read", "general", "--utc"))
+	if tokyo[5] != "+09:00" {
+		t.Errorf("local time under TZ=Asia/Tokyo carries offset %q, want +09:00", tokyo[5])
+	}
+	if utc[5] != "Z" {
+		t.Errorf("--utc printed offset %q, want Z", utc[5])
+	}
+	// the same instant, nine hours apart: the old code printed one string twice
+	th, _ := strconv.Atoi(tokyo[3])
+	uh, _ := strconv.Atoi(utc[3])
+	if (uh+9)%24 != th || tokyo[4] != utc[4] {
+		t.Errorf("Tokyo %s:%s and UTC %s:%s are not the same instant", tokyo[3], tokyo[4], utc[3], utc[4])
+	}
+	if got, want := utc[3]+":"+utc[4], sent.Format("15:04"); got != want {
+		t.Errorf("--utc printed %s, the message was sent at %s", got, want)
+	}
+	// every read surface, not just `read`
+	for _, args := range [][]string{{"mentions"}, {"inbox"}} {
+		out := run("Asia/Tokyo", append(args, "--utc")...)
+		if m := stamp.FindStringSubmatch(out); m != nil && m[5] != "Z" {
+			t.Errorf("%v printed offset %q under --utc", args, m[5])
+		}
 	}
 }
