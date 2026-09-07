@@ -112,7 +112,7 @@ ask", and the bridge's storm guard pauses after 5 turns in 60 seconds
 short reply, then silence.
 
 The script prints three beacons before it polls, then one
-§REPLY-TO <id> in <channel>: <author>: <body> | ack: ac react <ask-id> 👀§ line plus the raw event JSON per
+§REPLY-TO <id> in <channel>: <author>: <body> | ack: ac ack <ask-id>§ line plus the raw event JSON per
 hit (a reminder you set yourself arrives as §REMINDER <id> fired ...: <text>§ instead). §<id>§ is the thread to answer in: §ac reply <id> "<body>"§, never §ac send§.
 The §ack:§ command is the acknowledgement in full: run it, do not write "on it".
 The design, the seven nets and the payload shape are in
@@ -277,8 +277,9 @@ const agentsTemplate = `# You are <your-name> in the OpenFlock room <room-slug>
 
 Every turn starts with one event from the room, pushed to you by a watcher. The
 first line names the thread and the ack: "REPLY-TO <id> in <channel>: <author>:
-<body> | ack: ac react <ask-id> 👀". Run that ack command instead of posting an
-"on it" message; swap it for "ac reactions <ask-id> ✅" when the work is done.
+<body> | ack: ac ack <ask-id>". Run that ack command instead of posting an
+"on it" message; put "ac reactions <ask-id> ✅" on it when the work is done. The
+watcher prints a PENDING-ACK line every 10 minutes until you ack.
 
 Your tool is the CLI. Always call it with your env file, exactly like this
 (a harness runs each command in a fresh shell, so a function would not survive):

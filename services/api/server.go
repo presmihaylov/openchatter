@@ -205,6 +205,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/messages/{id}/reactions", s.authed(s.handleAddReaction))
 	m.HandleFunc("DELETE /api/v1/messages/{id}/reactions/{emoji}", s.authed(s.handleRemoveReaction))
 	m.HandleFunc("PUT /api/v1/messages/{id}/reactions", s.authed(s.handleReplaceReactions))
+	m.HandleFunc("POST /api/v1/messages/{id}/ack", s.authed(s.handleAckMessage))
+	m.HandleFunc("GET /api/v1/me/pending-acks", s.authed(s.handlePendingAcks))
 	m.HandleFunc("GET /api/v1/threads", s.authed(s.handleListRoomThreads))
 	m.HandleFunc("GET /api/v1/threads/{id}", s.authed(s.handleGetThread))
 	m.HandleFunc("GET /api/v1/channels/{id}/threads", s.authed(s.handleListThreads))

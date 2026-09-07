@@ -401,6 +401,45 @@ func TestSkillRawCurlsCarryAccessHeaders(t *testing.T) {
 	}
 }
 
+// TestWatcherTemplateNagsAboutUnackedAsks: an ask nobody acked must keep coming
+// back. The nag is a wake on purpose (task 32), so its format is load-bearing:
+// the id, who asked, where, and the command that stops it.
+func TestWatcherTemplateNagsAboutUnackedAsks(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("template needs jq")
+	}
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := watcherTemplate(t, srv.URL)
+
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(home, ".openflock", "room.alice.env")
+	env := "SERVER=" + srv.URL + "\nTOKEN=" + alice.token + "\nOPENFLOCK_ACK_NAG_SECS=1\n"
+	if err := os.WriteFile(envFile, []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var ask map[string]any
+	out := runWatcherPosting(t, script, home, func() {
+		ask = bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice please look"}, 201)
+	})
+	want := "PENDING-ACK: 1 unacked asks: " + ask["id"].(string) + " from bob in #general. ack: ac ack <id>"
+	if !strings.Contains(out, want) {
+		t.Fatalf("watcher did not nag with %q:\n%s", want, out)
+	}
+
+	// acking it stops the nag: the next run is silent
+	alice.must("POST", "/api/v1/messages/"+ask["id"].(string)+"/ack", nil, 200)
+	out = runWatcherPosting(t, script, home, func() {
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "no ask here"}, 201)
+	})
+	if strings.Contains(out, "PENDING-ACK") {
+		t.Fatalf("watcher nagged with nothing pending:\n%s", out)
+	}
+}
+
 // TestWatcherTemplateHearsOwnThreads: with WATCH empty (no channel heard in
 // full), an untagged reply in a thread alice wrote in must still surface.
 // Before thread_participants rode on the event, the elsewhere rule ate it.
@@ -435,8 +474,8 @@ func TestWatcherTemplateHearsOwnThreads(t *testing.T) {
 		t.Fatalf("watcher missed an untagged reply in alice's thread:\n%s", out)
 	}
 	// the ack nudge names the message that tagged you, never the thread root:
-	// a 👀 on the root would land on the wrong message (task 30)
-	if !strings.Contains(out, "| ack: ac react ") || strings.Contains(out, "| ack: ac react "+root["id"].(string)) {
+	// an ack on the root would land on the wrong message (task 30, task 32)
+	if !strings.Contains(out, "| ack: ac ack ") || strings.Contains(out, "| ack: ac ack "+root["id"].(string)) {
 		t.Fatalf("REPLY-TO line lacks the ack nudge, or points it at the root:\n%s", out)
 	}
 	if strings.Contains(out, "plain top-level") {
@@ -454,8 +493,8 @@ func TestWatcherTemplateDropsReactions(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, alice, bob := setupRoom(t, srv.URL)
 	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
-	if !strings.Contains(script, "EXCLUDE=\"message.reaction,") {
-		t.Fatal("template poll does not ask the server to drop reactions")
+	if !strings.Contains(script, "EXCLUDE=\"message.ack,message.reaction,") {
+		t.Fatal("template poll does not ask the server to drop acks and reactions")
 	}
 	mine := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my post"}, 201)
 

@@ -154,7 +154,7 @@ type eventMessage struct {
 // delivered to everyone as before.
 func gatedChannel(e models.Event) (string, bool) {
 	switch e.Type {
-	case "message.created", "message.edited", "message.reaction",
+	case "message.created", "message.edited", "message.reaction", "message.ack",
 		"channel.member_joined", "channel.member_left",
 		"channel.privacy_changed", "channel.renamed":
 		var pl struct {
@@ -225,6 +225,15 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 		if e.Type == "message.reaction" {
 			var rx models.ReactionEvent
 			if err := json.Unmarshal(e.Payload, &rx); err == nil && rx.AuthorID == p.ID && rx.ParticipantID != p.ID {
+				kept = append(kept, e)
+			}
+			continue
+		}
+		// an ack on your ask is news to you; your own ack is not. Reactions
+		// never wake an agent and neither does this: it is a receipt.
+		if e.Type == "message.ack" {
+			var ak models.AckEvent
+			if err := json.Unmarshal(e.Payload, &ak); err == nil && ak.AuthorID == p.ID && ak.ParticipantID != p.ID {
 				kept = append(kept, e)
 			}
 			continue

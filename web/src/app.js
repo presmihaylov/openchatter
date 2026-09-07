@@ -132,6 +132,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         if (m) m.reactions = ev.payload.reactions || [];
       }
     }
+    if (t === 'message.ack') {
+      for (const page of e.pages.values()) {
+        const m = page.list.find((x) => x.id === ev.payload.message_id);
+        if (m) m.acked_by = ev.payload.acked_by || [];
+      }
+    }
     return true;
   };
   const evictPages = () => {
@@ -401,6 +407,33 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const reactionMap = {};
   const QUICK_REACTIONS = ['👀', '✅', '👍', '🎉', '❤️', '🚀', '🙏', '😂'];
 
+  // Acks, keyed by message id. An ack is a receipt, not a reaction: one check
+  // for the message however many people acked, and the names live on the title
+  // so a glance says "somebody owns this" and a hover says who.
+  const ackMap = {};
+
+  function fillAckMark(box, acks) {
+    if (!box) return;
+    if (!acks || !acks.length) {
+      box.innerHTML = '';
+      box.removeAttribute('title');
+      return;
+    }
+    box.innerHTML = ICON.check;
+    box.title = `acknowledged by ${acks.map((a) => a.name).join(', ')}`;
+  }
+
+  function paintAck(msgID, acks) {
+    ackMap[msgID] = acks || [];
+    document.querySelectorAll(`.msg[data-id="${msgID}"] .msg-ack`).forEach(
+      (box) => fillAckMark(box, ackMap[msgID]));
+  }
+
+  async function ackMessage(msgID) {
+    const out = await api(`/api/v1/messages/${msgID}/ack`, { method: 'POST' });
+    paintAck(msgID, out.acked_by);
+  }
+
   // the add-reaction pill: the same smile-plus as the toolbar, tagged for the checks
   const ADD_REACTION_ICON = ICON.smilePlus.replace('class="ico lucide"', 'class="ico lucide rx-add-icon"');
 
@@ -577,6 +610,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const canEdit = m.author_id === me.id;
     const canDelete = canEdit || me.role === 'admin';
     const actions = [];
+    actions.push(`<button data-act="ack" title="Acknowledge" aria-label="Acknowledge">${ICON.check}</button>`);
     actions.push(`<button data-act="react" title="Add reaction" aria-label="Add reaction">${ICON.smilePlus}</button>`);
     if (!inThread && !m.thread_root_id) actions.push(`<button data-act="thread" title="Reply in thread" aria-label="Reply in thread">${ICON.messageSquare}</button>`);
     if (canEdit) actions.push(`<button data-act="edit" title="Edit" aria-label="Edit">${ICON.pencil}</button>`);
@@ -601,13 +635,15 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           return a && a.owner_name ? `<span class="owner-badge" title="server-verified owner">${esc(a.owner_name)}'s agent</span>` : '';
         })()}<span class="time">${fmtTime(m.created_at)}</span>
           ${m.edited_at ? '<span class="edited"> (edited)</span>' : ''}
-          ${m.is_broadcast ? ' <span class="bcast" title="broadcast">' + ICON.megaphone + '</span>' : ''}</div>
+          ${m.is_broadcast ? ' <span class="bcast" title="broadcast">' + ICON.megaphone + '</span>' : ''}<span class="msg-ack"></span></div>
         <div class="content">${renderMarkdown(m.body)}</div>
         ${atts}<div class="msg-reactions"></div>${replyBar}
       </div>
       <div class="msg-actions">${actions.join('')}</div>`;
     el.querySelector('.avatar').appendChild(
       avatarEl(participants.find((x) => x.id === m.author_id), 'avatar-msg'));
+    ackMap[m.id] = m.acked_by || [];
+    fillAckMark(el.querySelector('.msg-ack'), ackMap[m.id]);
     reactionMap[m.id] = m.reactions || [];
     const rxBox = el.querySelector('.msg-reactions');
     rxBox._msg = m; // the pills need the message to toggle against
@@ -668,6 +704,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         const r = btn.getBoundingClientRect();
         openReactionPicker(r.left, r.bottom + 4, m);
       }
+      if (act === 'ack') ackMessage(m.id);
       if (act === 'thread') openThread(m.thread_root_id || m.id);
       if (act === 'edit') editMessage(m);
       if (act === 'delete') deleteMessage(m);
@@ -1920,7 +1957,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       author_id: me.id, author_name: me.name,
       body, created_at: new Date().toISOString(),
       thread_root_id: rootID || null,
-      reply_count: 0, reactions: [],
+      reply_count: 0, reactions: [], acked_by: [],
       attachments: att ? [att] : [],
     };
     const el = msgEl(m, !!rootID);
@@ -2152,6 +2189,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       renderReactions(ev.payload.message_id);
       return;
     }
+    if (t === 'message.ack') {
+      paintAck(ev.payload.message_id, ev.payload.acked_by);
+      return;
+    }
     // a call and its result change no room structure; a refresh per call would
     // hammer every open tab while an MCP client drives the agents
     if (t === 'capability.call' || t === 'capability.result') return;
@@ -2222,6 +2263,11 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (t === 'message.reaction') {
       pageApply(e, ev);
       reactionMap[ev.payload.message_id] = ev.payload.reactions || [];
+      return;
+    }
+    if (t === 'message.ack') {
+      pageApply(e, ev);
+      paintAck(ev.payload.message_id, ev.payload.acked_by);
       return;
     }
     if (t.startsWith('message.')) {

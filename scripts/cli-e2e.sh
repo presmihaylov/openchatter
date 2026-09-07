@@ -269,9 +269,14 @@ iseq=$("${B[@]}" inbox --peek --json | jq_ '[e["seq"] for e in d["events"] if e[
 [ -n "$iseq" ] || fail "inbox --json gave no seq"
 [ "$(unacked)" = "$((before + 1))" ] || fail "peek must not mark anything"
 "${B[@]}" inbox | grep -q "seq $iseq" || fail "inbox drain did not print seq $iseq"
-"${B[@]}" ack "$iseq" | grep -q "acked $iseq" || fail "ack did not confirm"
+"${B[@]}" seen "$iseq" | grep -q "seen $iseq" || fail "seen did not confirm"
 [ "$(unacked)" = "$before" ] || fail "peek should show $before unacked after the ack, got $(unacked)"
-ok "inbox drain and ack"
+# the old spelling keeps working for a release, with a warning on stderr
+"${A[@]}" send general "@bob second inbox test" --new-topic >/dev/null
+iseq2=$("${B[@]}" inbox --peek --json | jq_ '[e["seq"] for e in d["events"] if e["payload"]["body"] == "@bob second inbox test"][0]')
+"${B[@]}" ack "$iseq2" 2>"$WORK/ackwarn" | grep -q "seen $iseq2" || fail "ack <seq> no longer confirms an event"
+grep -q 'now `seen <seq>`' "$WORK/ackwarn" || fail "ack <seq> did not warn about the rename"
+ok "inbox drain, seen, and ack <seq> still works with a warning"
 
 # 14. capabilities (task 27): bob registers, alice lists and calls, bob answers from
 # the inbox, the result comes back; an error answer exits 1; unregister empties the list.
@@ -445,5 +450,19 @@ HOME="$CACHE_HOME" XDG_CACHE_HOME= "$CLI" --env "$WORK/alice.env" mentions --sin
 [ -n "$(ls -A "$CACHE_HOME/.cache/agentchat")" ] || fail "an existing ~/.cache/agentchat must keep being used"
 [ ! -d "$CACHE_HOME/.cache/openflock" ] || fail "a legacy cache must not be abandoned for a new one"
 ok "cursor cache stays in ~/.cache/agentchat when that is where it already is"
+
+# 19. explicit acknowledgements (task 32): an ask addressed to bob is pending
+# until bob acks it by message id, and the check mark rides on the message.
+"${A[@]}" send general "@bob please own this" --new-topic >/dev/null
+askid=$("${B[@]}" mentions --json | jq_ '[e["payload"]["id"] for e in d["events"] if e["payload"]["body"] == "@bob please own this"][0]')
+[ -n "$askid" ] || fail "mentions gave no id for the ask"
+"${B[@]}" pending | grep -q "$askid" || fail "the ask is not in bob's pending list"
+"${B[@]}" pending | grep -q "from alice" || fail "pending does not name who asked"
+! "${A[@]}" pending | grep -q "$askid" || fail "alice's own ask must not be pending for her"
+"${B[@]}" ack "$askid" | grep -q "acked $askid" || fail "ack <message-id> did not confirm"
+! "${B[@]}" pending | grep -q "$askid" || fail "the acked ask is still pending"
+"${B[@]}" msg "$askid" --json | grep -q '"acked_by"' || fail "acked_by is missing from the message"
+"${B[@]}" ack "$askid" | grep -q "acked $askid" || fail "acking twice must be a no-op, not an error"
+ok "ack <message-id>, pending goes to zero, acked_by rides the message"
 
 echo CLI_E2E_OK

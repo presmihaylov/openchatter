@@ -388,6 +388,8 @@ body:not(.booting):has(> :not(#splash):not(#pw-banner):not(script):not(.hidden))
 .msg .body { min-width: 0; flex: 1; }
 .msg .meta { font-size: 11px; color: var(--dim); }
 .msg .meta .author { font-weight: 700; color: var(--text); font-size: 13px; margin-right: 6px; }
+.msg .meta .msg-ack:not(:empty) { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--text); }
+.msg .meta .msg-ack svg { width: 14px; height: 14px; }
 /* Slack-compact: 14px message text under the 15px chrome base (Maya settled
    the exact size); the em-based markdown scale follows it proportionally */
 :is(.msg, #doc-modal) .content { overflow-wrap: break-word; font-size: 14px; }

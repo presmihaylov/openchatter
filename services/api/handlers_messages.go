@@ -675,3 +675,42 @@ func sanitizeFilename(name string) string {
 		return r
 	}, name)
 }
+
+// handleAckMessage records that the caller has taken this ask on. Idempotent:
+// acking twice succeeds, so a retry after a dropped response never errors.
+func (s *Server) handleAckMessage(w http.ResponseWriter, r *http.Request, p models.Participant) {
+	id := r.PathValue("id")
+	if !isUUID(id) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	// you can only ack what you could read: membership is the read gate here as
+	// everywhere else, and an ack paints your name into other people's UI
+	msg, err := s.store.MessageByID(r.Context(), p.RoomID, id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if !s.requireChannelMember(w, r, p, msg.ChannelID) {
+		return
+	}
+	ev, err := s.store.SetAck(r.Context(), p.RoomID, id, p.ID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"acked_by": ev.AckedBy})
+}
+
+// handlePendingAcks lists the asks addressed to the caller that it has not
+// acked. This is what the watcher nags from, so it is scoped to the caller
+// only: no participant can read another's pending list.
+func (s *Server) handlePendingAcks(w http.ResponseWriter, r *http.Request, p models.Participant) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	pending, err := s.store.PendingAcks(r.Context(), p.RoomID, p.ID, limit)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pending": pending})
+}

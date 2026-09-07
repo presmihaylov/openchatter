@@ -54,7 +54,14 @@ const messageColumns = `
 	                         json_agg(rp.name ORDER BY mr.created_at) AS names
 	                    FROM message_reactions mr JOIN participants rp ON rp.id = mr.participant_id
 	                   WHERE mr.message_id = m.id GROUP BY mr.emoji) g),
-	           '[]'::json) AS reactions`
+	           '[]'::json) AS reactions,
+	       COALESCE(
+	           (SELECT json_agg(json_build_object(
+	                'participant_id', ak.participant_id, 'name', ap.name,
+	                'acked_at', ak.created_at) ORDER BY ak.created_at)
+	            FROM message_acks ak JOIN participants ap ON ap.id = ak.participant_id
+	            WHERE ak.message_id = m.id),
+	           '[]'::json) AS acked_by`
 
 const messageFrom = `
 	FROM messages m
@@ -64,10 +71,10 @@ const messageSelect = "SELECT" + messageColumns + messageFrom
 
 func scanMessage(row pgx.Row) (Message, error) {
 	var m Message
-	var attJSON, menJSON, repJSON, rxnJSON []byte
+	var attJSON, menJSON, repJSON, rxnJSON, ackJSON []byte
 	err := row.Scan(&m.ID, &m.RoomID, &m.ChannelID, &m.ThreadRootID, &m.AuthorID, &m.AuthorName,
 		&m.Body, &m.IsBroadcast, &m.Kind, &m.CreatedAt, &m.EditedAt, &m.ReplyCount, &m.LastReplyAt,
-		&repJSON, &attJSON, &menJSON, &rxnJSON)
+		&repJSON, &attJSON, &menJSON, &rxnJSON, &ackJSON)
 	if err != nil {
 		return m, err
 	}
@@ -82,6 +89,9 @@ func scanMessage(row pgx.Row) (Message, error) {
 	}
 	m.ReplyToID = m.ReplyTo()
 	if err := json.Unmarshal(rxnJSON, &m.Reactions); err != nil {
+		return m, err
+	}
+	if err := json.Unmarshal(ackJSON, &m.AckedBy); err != nil {
 		return m, err
 	}
 	return m, nil

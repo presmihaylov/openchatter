@@ -165,6 +165,9 @@ type Message struct {
 	// Reactions groups every emoji on the message with who added it, in the
 	// order the emoji first appeared (Slack keeps that order too).
 	Reactions []Reaction `json:"reactions"`
+	// AckedBy is every recipient who explicitly took the ask on, oldest first.
+	// Empty is the normal case: only an ask is ever acked.
+	AckedBy []Ack `json:"acked_by"`
 	// ReplyToID is what to pass as thread_root_id (or to `ac reply`) to continue
 	// this message's thread. Agents kept deriving it wrong from thread_root_id
 	// being null on a root, so every scanned message states it outright.
@@ -178,6 +181,15 @@ func (m Message) ReplyTo() string {
 		return *m.ThreadRootID
 	}
 	return m.ID
+}
+
+// Ack is one recipient's explicit acknowledgement of an ask. It is a receipt,
+// not a reaction: the watcher nags an agent until it has one on every ask
+// addressed to it, and 👀 / ✅ keep their own separate meanings.
+type Ack struct {
+	ParticipantID string    `json:"participant_id"`
+	Name          string    `json:"name"`
+	AckedAt       time.Time `json:"acked_at"`
 }
 
 // Reaction is one emoji on a message and everybody who added it, oldest first.
@@ -203,6 +215,32 @@ type ReactionEvent struct {
 	ParticipantName string     `json:"participant_name"`
 	Added           bool       `json:"added"`
 	Reactions       []Reaction `json:"reactions"`
+}
+
+// AckEvent is the payload of a message.ack event: who acked what, plus the
+// message's full ack list so a client can repaint without a refetch.
+type AckEvent struct {
+	MessageID       string  `json:"message_id"`
+	ChannelID       string  `json:"channel_id"`
+	ThreadRootID    *string `json:"thread_root_id"`
+	AuthorID        string  `json:"author_id"`
+	AuthorName      string  `json:"author_name"`
+	ParticipantID   string  `json:"participant_id"`
+	ParticipantName string  `json:"participant_name"`
+	AckedBy         []Ack   `json:"acked_by"`
+}
+
+// PendingAck is one ask addressed to a participant that it has not acked yet.
+// Reason says why it is an ask: "mention" or "thread".
+type PendingAck struct {
+	MessageID   string    `json:"message_id"`
+	ChannelID   string    `json:"channel_id"`
+	ChannelName string    `json:"channel_name"`
+	AuthorID    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	CreatedAt   time.Time `json:"created_at"`
+	Excerpt     string    `json:"excerpt"`
+	Reason      string    `json:"reason"`
 }
 
 type Event struct {

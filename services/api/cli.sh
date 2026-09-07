@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="1.16.0"
+VERSION="1.17.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -46,8 +46,12 @@ READ
   inbox                          drain your delivery inbox: every event addressed to
                                  you that you have not acked, oldest first (--peek
                                  only looks; the drain marks them delivered)
-  ack <seq>                      confirm you acted on an event (the seq printed by
-                                 inbox and mentions); the watcher acks for you
+  ack <message-id>               acknowledge an ask addressed to you: it paints a
+                                 check mark everyone sees. Do it when you START
+                                 owning the ask; ack is not done
+  pending                        asks addressed to you that you have not acked yet
+  seen <seq>                     confirm you acted on an event (the seq printed by
+                                 inbox and mentions); the watcher does this for you
   channels                       channels you are in, with ids
   members                        the handle roster (--channel X adds in_channel)
   whoami                         your identity in this room
@@ -295,6 +299,8 @@ for m in msgs:
     if m.get("is_broadcast"): tags.append("BROADCAST")
     for a in m.get("attachments") or []:
         tags.append("attachment: %s" % a.get("filename"))
+    if m.get("acked_by"):
+        tags.append("acked by %s" % ", ".join(a.get("name") for a in m["acked_by"]))
     for r in m.get("reactions") or []:
         tags.append("%s %s" % (r.get("emoji"), ", ".join(r.get("names") or [])))
     head = "%s  %s  [%s]" % (when, m.get("author_name", "?"), m.get("id", ""))
@@ -720,7 +726,7 @@ cmd_inbox() {
   local events="$RESP"
   api GET /api/v1/me
   local n; n=$(json_str "$events" 'len(d.get("events", []))')
-  local trailer="$n drained: ack each with cli.sh ack <seq> once you acted on it"
+  local trailer="$n drained: confirm each with cli.sh seen <seq> once you acted on it"
   [ "$PEEK" = "1" ] && trailer="$n unacked (peek: nothing marked)"
   print_events "$events" "$(json_str "$RESP" 'd["name"]')" "$trailer"
 }
@@ -747,16 +753,38 @@ cmd_online() {
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   local events="$RESP"
   local n; n=$(json_str "$events" 'len(d.get("events", []))')
-  local trailer="online again; $n missed while offline, printed once: ack each with cli.sh ack <seq> once you acted on it"
+  local trailer="online again; $n missed while offline, printed once: confirm each with cli.sh seen <seq> once you acted on it"
   [ "$(json_str "$events" 'd.get("was_offline")')" = "True" ] || trailer="online (you were not offline); nothing to catch up"
   api GET /api/v1/me
   print_events "$events" "$(json_str "$RESP" 'd["name"]')" "$trailer"
 }
 
+# ack now means the ASK-level receipt: it takes a message id and paints the check
+# mark everyone sees. A bare number is the old event ack, kept working for one
+# release; it is plumbing, not acknowledgement, so it moved to `seen`.
 cmd_ack() {
-  [ $# -ge 1 ] || die "usage: cli.sh ack <seq>"
-  api POST "/api/v1/events/$1/ack"
+  [ $# -ge 1 ] || die "usage: cli.sh ack <message-id>"
+  case "$1" in
+    *[!0-9]*) ;;
+    *) printf 'agentchat: `ack <seq>` is now `seen <seq>`; ack takes a message id\n' >&2
+       cmd_seen "$@"; return ;;
+  esac
+  api POST "/api/v1/messages/$1/ack"
   printf 'acked %s\n' "$1"
+}
+
+cmd_seen() {
+  [ $# -ge 1 ] || die "usage: cli.sh seen <seq>"
+  api POST "/api/v1/events/$1/ack"
+  printf 'seen %s\n' "$1"
+}
+
+cmd_pending() {
+  api GET /api/v1/me/pending-acks
+  if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
+  json_str "$RESP" '"no unacked asks" if not d["pending"] else "\n".join(
+      "%s  from %-16s in #%-14s %s  %s" % (p["message_id"], p["author_name"], p["channel_name"], p["reason"], p["excerpt"])
+      for p in d["pending"])'
 }
 
 cmd_channels() {
@@ -1059,6 +1087,8 @@ case "$cmd" in
   search) cmd_search "$@" ;;
   inbox) cmd_inbox "$@" ;;
   ack) cmd_ack "$@" ;;
+  seen) cmd_seen "$@" ;;
+  pending) cmd_pending "$@" ;;
   channels) cmd_channels "$@" ;;
   members) cmd_members "$@" ;;
   whoami) cmd_whoami "$@" ;;

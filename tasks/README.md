@@ -43,7 +43,7 @@ has run its backfill and verification queries.
 | 29 | Thread reply updates the root's reply footer live, no reload | review |
 | 30 | Ack is a 👀 reaction, not a text line; watcher prints the ack command | review |
 | 31 | OpenFlock rename step 1: dual-read env vars, client dir and watcher hooks | review |
-| 32 | Explicit acknowledgements: `ac ack`, per-recipient ack rows, watcher nag | queued |
+| 32 | Explicit acknowledgements: `ac ack`, per-recipient ack rows, watcher nag | review |
 
 Tasks 09-15 are the feature queue Maya gave on 2026-09-04 (roots 948f9802 and dd69d0b2, process note 1a7ee18d
 in #agentchat): one at a time, each with subagent review, browser e2e with screenshots, its own deploy and a
