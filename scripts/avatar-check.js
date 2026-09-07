@@ -85,7 +85,9 @@ const uploadAvatar = async (token, bytes) => {
     if (!row) return { missing: true };
     const box = row.querySelector('.avatar');
     const img = box.querySelector('img');
-    return { tag: box.firstElementChild.tagName, src: img ? img.getAttribute('src') : '', text: box.textContent.trim() };
+    const r = (img || box.firstElementChild).getBoundingClientRect();
+    return { tag: box.firstElementChild.tagName, src: img ? img.getAttribute('src') : '', text: box.textContent.trim(),
+      w: Math.round(r.width), h: Math.round(r.height), col: Math.round(box.getBoundingClientRect().width) };
   }, name);
   for (const [name, want] of [['bare', SEED_128], ['relic', SEED_128]]) {
     lastStep = 'row ' + name;
@@ -99,6 +101,22 @@ const uploadAvatar = async (token, bytes) => {
     .some((m) => (m.querySelector('.author') || {}).textContent === 'shot' && ((m.querySelector('.avatar img') || {}).getAttribute('src') || '').startsWith('blob:')), { timeout: 8000 });
   const up = await rowAvatar('shot');
   assert(up.tag === 'IMG' && up.text === '', 'shot row avatar: ' + JSON.stringify(up));
+
+  // 1b. message rows sit 10% larger than the same tile elsewhere: 28 -> 31.
+  //     the column matches the image, so nothing clips or shifts the baseline.
+  for (const name of ['bare', 'relic', 'shot']) {
+    lastStep = 'row size ' + name;
+    const a = await rowAvatar(name);
+    assert(a.w === 31 && a.h === 31 && a.col === 31, name + ' row avatar size: ' + JSON.stringify(a));
+  }
+  lastStep = 'sizes outside message rows';
+  const others = await page.evaluate(() => {
+    const box = (sel) => { const e = document.querySelector(sel); if (!e) return null;
+      const r = e.getBoundingClientRect(); return Math.round(r.width) + 'x' + Math.round(r.height); };
+    return { tree: box('#members .avatar-sm, #participants .avatar-sm'), me: box('#me-footer .avatar-me') };
+  });
+  assert(!others.tree || others.tree === '20x20', 'participants tree avatar changed: ' + others.tree);
+  assert(!others.me || others.me === '32x32', 'footer avatar changed: ' + others.me);
 
   // 2. no glyph anywhere in the chrome: not one .avatar-emoji is rendered,
   //    and no avatar box carries text

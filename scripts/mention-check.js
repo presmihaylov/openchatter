@@ -117,7 +117,8 @@ const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
     const sel = '.mention-ac:not(.slash-ac):not(.hidden)';
     await page.waitForSelector(sel, { timeout: 5000 });
     return page.$$eval(sel + ' .mention-opt', (ns) => ns.map((n) => ({
-      name: n.querySelector('.mention-name').textContent.replace(/^\S+\s/, ''),
+      // the row is an avatar image plus the name, so the text is the name alone
+      name: n.querySelector('.mention-name').textContent.trim(),
       hint: (n.querySelector('.slash-hint') || {}).textContent || '',
     })));
   };

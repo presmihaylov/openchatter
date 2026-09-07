@@ -364,7 +364,7 @@ body:not(.booting):has(> :not(#splash):not(#pw-banner):not(script):not(.hidden))
 .msg.pending { opacity: .5; } /* optimistic send, not yet confirmed by the server */
 /* revealed on hover or keyboard focus; stays in the tab order while hidden */
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
-.msg .avatar { width: 28px; flex: none; }
+.msg .avatar { width: 31px; flex: none; }
 
 /* slack-style rounded avatar boxes: always an image (the seedling when the
    member uploaded none); .avatar-emoji is left only for the ghost tile that
@@ -372,6 +372,9 @@ body:not(.booting):has(> :not(#splash):not(#pw-banner):not(script):not(.hidden))
 .avatar-img { object-fit: cover; display: block; }
 .avatar-emoji { display: flex; align-items: center; justify-content: center; background: none; }
 .avatar-msg { width: 28px; height: 28px; border-radius: 7px; font-size: 16px; flex: none; }
+/* message rows sit 10% larger than the same tile elsewhere (search hits);
+   the column above matches so the text baseline does not shift */
+.msg .avatar-msg { width: 31px; height: 31px; border-radius: 8px; }
 .avatar-sm { width: 20px; height: 20px; border-radius: 5px; font-size: 12px; flex: none; }
 .avatar-lg { width: 96px; height: 96px; border-radius: 18px; font-size: 54px; margin: 0 auto; }
 /* owner badge: human owner's avatar overlaid bottom-right on an agent avatar.

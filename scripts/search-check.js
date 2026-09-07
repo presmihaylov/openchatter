@@ -56,8 +56,11 @@ const retype = async (page, q) => { await page.click('#search-input', { clickCou
   await page.setViewport({ width: 1000, height: 800 });
   page.on('pageerror', (e) => { console.error('PAGEERROR', e.message); process.exitCode = 1; });
   await seedLogin(page, slug, human);
-  // the message list's avatar size is the reference for result rows
+  // result rows carry the base .avatar-msg tile. message rows are deliberately
+  // 10% larger than it (31 vs 28), so they are no longer the reference here.
+  const SEARCH_AVATAR_W = 28;
   const msgAvatarW = await page.evaluate(() => Math.round(document.querySelector('#messages .msg .avatar-msg').getBoundingClientRect().width));
+  if (msgAvatarW !== 31) throw new Error('message row avatar is not 31px: ' + msgAvatarW);
 
   // A) exact text query: the hit renders like a message row, via=text (no tag)
   await page.evaluate(() => document.getElementById('open-search').click());
@@ -66,7 +69,7 @@ const retype = async (page, q) => { await page.click('#search-input', { clickCou
   await page.waitForFunction(() => [...document.querySelectorAll('#search-results .search-hit-row')].some((r) => r.textContent.toLowerCase().includes('budget')), { timeout: 5000 });
   let got = await rows(page);
   const hit = got.find((r) => r.snippet.includes('budget'));
-  if (!hit.avatar || hit.avatarW !== msgAvatarW) throw new Error('result row lacks the message-sized avatar: ' + JSON.stringify(hit) + ' msg=' + msgAvatarW);
+  if (!hit.avatar || hit.avatarW !== SEARCH_AVATAR_W) throw new Error('result row lacks the base-sized avatar: ' + JSON.stringify(hit) + ' want=' + SEARCH_AVATAR_W);
   if (hit.author !== 'searchbot' || hit.channel !== '#general') throw new Error('row meta: ' + JSON.stringify(hit));
   if (hit.via !== '') throw new Error('direct hit must not carry the semantic tag');
   if (!got.every((r) => r.avatar)) throw new Error('every result row needs an avatar');
