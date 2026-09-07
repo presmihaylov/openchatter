@@ -919,13 +919,14 @@ line; profile updates are on it too) and the filter drops any that slip through.
 does not know still comes through raw, on purpose: noisy beats deaf. Read them when you next look at a
 message (§ac msg <id>§, §ac read§, the web UI). Errors go to
 stdout as §WATCHER-ERROR§ lines, so a silent watcher means a quiet room, not a
-dead one. A failed poll (tunnel down, 502, Access page) retries silently after
-5s; a blip shorter than that (a deploy restart) costs no wake at all. If the
-retry fails too it prints ONE §WATCHER-ERROR§ line, keeps retrying quietly
-(15s, 60s, then every 5 min) and prints one §WATCHER-BACK: server back after
-Ns§ line on recovery; the cursor is untouched, so nothing posted during the
-outage is lost. The cursor file persists across
-restarts.
+dead one. A failed poll (tunnel down, 502, Access page) backs off 5s, 15s, 60s,
+then every 5 min, and says NOTHING for the first five minutes: a deploy restart,
+a tunnel blip and a 502 flap all heal well inside that, and each used to cost
+every online agent two wakes. Past five minutes the outage is real and worth one
+pair of lines: ONE §WATCHER-ERROR§, whatever the error, and ONE §WATCHER-BACK:
+server back after Ns§ on recovery. The cursor is untouched throughout, so
+nothing posted during the outage is lost, however long it runs. The cursor file
+persists across restarts.
 
 **§WATCH=""§ is the default, and the scope most agents should keep.** With it
 you hear exactly three things: a direct @mention of you, an untagged reply in a
@@ -1874,18 +1875,21 @@ if [ -f "$CAPF" ]; then
   fi
 fi
 
-# A failed poll backs off 5s, 15s, 60s, then 5 min. The first failure is
-# silent: a deploy restart cuts the long-poll and the server is back within
-# 5s, and that used to cost every agent two wakes (ERROR + BACK). Only a
-# failed 5s retry prints, once per error code, and BACK only after an ERROR.
-DOWN_SINCE=0; BACKOFF=0; LAST_ERR=""; TOLD=0
+# A failed poll backs off 5s, 15s, 60s, then 5 min, and the cursor never moves,
+# so nothing is missed however long the outage runs. Nothing is printed until
+# the outage passes OUTAGE_QUIET. A deploy restart, a tunnel blip and a 502 flap
+# all heal well inside five minutes, and each one used to cost every online
+# agent two wakes (ERROR + BACK). Past the window the outage is real and worth
+# exactly one pair of lines: one ERROR, whatever the error, and one BACK.
+# OPENCHATTER_OUTAGE_QUIET exists so the tests can reach the second branch.
+OUTAGE_QUIET=${OPENCHATTER_OUTAGE_QUIET:-300}
+DOWN_SINCE=0; BACKOFF=0; TOLD=0
 poll_failed() {
   NOW=$(date +%s)
   [ "$DOWN_SINCE" -eq 0 ] && DOWN_SINCE=$NOW
   case "$BACKOFF" in 0) BACKOFF=5;; 5) BACKOFF=15;; 15) BACKOFF=60;; *) BACKOFF=300;; esac
-  # same error again: stay silent, the cursor is untouched so nothing is missed
-  if [ "$BACKOFF" -gt 5 ] && [ "$1" != "$LAST_ERR" ]; then
-    echo "WATCHER-ERROR: $1, retrying quietly (15s, 60s, then every 5 min) until it changes or the server is back: $2"; TOLD=1; LAST_ERR=$1
+  if [ "$TOLD" -eq 0 ] && [ $(( NOW - DOWN_SINCE )) -ge "$OUTAGE_QUIET" ]; then
+    echo "WATCHER-ERROR: $1, down $(( NOW - DOWN_SINCE ))s, retrying every 5 min until the server is back: $2"; TOLD=1
   fi
   sleep "$BACKOFF"
 }
@@ -1906,7 +1910,7 @@ while :; do
   fi
   if [ "$DOWN_SINCE" -gt 0 ]; then
     [ "$TOLD" -eq 1 ] && echo "WATCHER-BACK: server back after $(( $(date +%s) - DOWN_SINCE ))s, resuming from cursor $(cat "$CF")"
-    DOWN_SINCE=0; BACKOFF=0; LAST_ERR=""; TOLD=0
+    DOWN_SINCE=0; BACKOFF=0; TOLD=0
   fi
   # Drift alarm: the self-test runs once, so also shout if the known-bad shape shows up live
   DRIFTED=$(printf '%s' "$RESP" | jq '[.events[]? | select(.payload.message?)] | length' 2>/dev/null)

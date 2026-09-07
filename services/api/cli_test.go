@@ -656,7 +656,7 @@ func TestWatcherTemplateWakeHookOptIn(t *testing.T) {
 // gatedWatcher runs the watcher template through a proxy that can be switched
 // to answer /events with a Cloudflare-style 502 page. It returns the switch,
 // the failed-poll count, and a stop that yields the watcher's output.
-func gatedWatcher(t *testing.T) (setDown func(bool), failed func() int, post func(string), stop func() string) {
+func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed func() int, post func(string), stop func() string) {
 	t.Helper()
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
@@ -708,7 +708,7 @@ func gatedWatcher(t *testing.T) (setDown func(bool), failed func() int, post fun
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	cmd := exec.CommandContext(ctx, "sh", path)
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Env = append(append(os.Environ(), "HOME="+home), extraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -732,14 +732,15 @@ func gatedWatcher(t *testing.T) (setDown func(bool), failed func() int, post fun
 	return setDown, failed, post, stop
 }
 
-// TestWatcherTemplateBacksOffOnOutage: a dead server used to be a WATCHER-ERROR
-// wake every 5s for every agent. Now a failed retry prints once, repeats of
-// the same code stay silent, recovery prints one WATCHER-BACK line, and the
-// cursor is untouched so a message posted during the outage still arrives.
+// TestWatcherTemplateBacksOffOnOutage: past the quiet window a real outage is
+// worth exactly one pair of lines, however many polls fail and however much the
+// error text moves (a Cloudflare 502 carries a fresh ray id every hit, which
+// used to print a new line each time). The cursor is untouched, so a message
+// posted during the outage still arrives.
 func TestWatcherTemplateBacksOffOnOutage(t *testing.T) {
-	setDown, failed, post, stop := gatedWatcher(t)
+	setDown, failed, post, stop := gatedWatcher(t, "OPENCHATTER_OUTAGE_QUIET=2")
 	setDown(true)
-	time.Sleep(4 * time.Second)
+	time.Sleep(5 * time.Second)
 	post("@alice posted while you were down")
 	setDown(false)
 	n := failed()
@@ -759,26 +760,26 @@ func TestWatcherTemplateBacksOffOnOutage(t *testing.T) {
 	}
 }
 
-// TestWatcherTemplateSilentOnBlip: a deploy restart cuts one long-poll and the
-// server is back before the 5s retry. That used to cost every agent two wakes
-// (ERROR + BACK) per deploy; now a single failed poll prints nothing at all,
-// and the mention posted during the blip still arrives.
-func TestWatcherTemplateSilentOnBlip(t *testing.T) {
+// TestWatcherTemplateSilentUnderFiveMinutes: a deploy restart, a tunnel blip and
+// a 502 flap all heal well inside five minutes. Each one used to cost every
+// online agent two wakes (ERROR + BACK); a whole run of failed polls inside the
+// window now prints nothing at all, and the mention posted during it arrives.
+func TestWatcherTemplateSilentUnderFiveMinutes(t *testing.T) {
 	setDown, failed, post, stop := gatedWatcher(t)
 	setDown(true)
-	deadline := time.Now().Add(5 * time.Second)
-	for failed() == 0 && time.Now().Before(deadline) {
+	deadline := time.Now().Add(6 * time.Second)
+	for failed() < 3 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
+	}
+	if n := failed(); n < 3 {
+		t.Fatalf("wanted several failed polls inside the window, got %d", n)
 	}
 	setDown(false)
 	post("@alice posted during the blip")
 	time.Sleep(3 * time.Second)
 	got := stop()
-	if n := failed(); n != 1 {
-		t.Fatalf("wanted exactly one failed poll, got %d:\n%s", n, got)
-	}
 	if strings.Contains(got, "WATCHER-ERROR: HTTP 502") || strings.Contains(got, "WATCHER-BACK") {
-		t.Fatalf("a one-poll blip must be silent:\n%s", got)
+		t.Fatalf("an outage inside the quiet window must be silent:\n%s", got)
 	}
 	if !strings.Contains(got, "posted during the blip") {
 		t.Fatalf("a mention posted during the blip was lost:\n%s", got)
