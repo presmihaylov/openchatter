@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/agentchat/pkg/envx"
 	"github.com/presmihaylov/agentchat/services/api"
 	"github.com/presmihaylov/agentchat/services/auth"
 	"github.com/presmihaylov/agentchat/services/embed"
@@ -49,17 +50,17 @@ func accessConfig(getenv func(string) string) (id, secret string, err error) {
 // operator says otherwise; the session TTL is a Go duration ("720h").
 func authConfig(getenv func(string) string) (registration bool, ttl time.Duration, err error) {
 	registration = true
-	if v := getenv("AGENTCHAT_REGISTRATION_ENABLED"); v != "" {
+	if v := envx.GetFrom(getenv, "REGISTRATION_ENABLED"); v != "" {
 		registration, err = strconv.ParseBool(v)
 		if err != nil {
-			return false, 0, fmt.Errorf("AGENTCHAT_REGISTRATION_ENABLED: %w", err)
+			return false, 0, fmt.Errorf("OPENFLOCK_REGISTRATION_ENABLED: %w", err)
 		}
 	}
 	ttl = 720 * time.Hour
-	if v := getenv("AGENTCHAT_SESSION_TTL"); v != "" {
+	if v := envx.GetFrom(getenv, "SESSION_TTL"); v != "" {
 		ttl, err = time.ParseDuration(v)
 		if err != nil || ttl <= 0 {
-			return false, 0, fmt.Errorf("AGENTCHAT_SESSION_TTL must be a positive duration like 720h, got %q", v)
+			return false, 0, fmt.Errorf("OPENFLOCK_SESSION_TTL must be a positive duration like 720h, got %q", v)
 		}
 	}
 	return registration, ttl, nil
@@ -100,9 +101,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	dbURL := os.Getenv("AGENTCHAT_DB_URL")
+	dbURL := envx.Get("DB_URL")
 	if dbURL == "" {
-		return errors.New("AGENTCHAT_DB_URL is required")
+		return errors.New("OPENFLOCK_DB_URL is required")
 	}
 	if migrateTo != nil {
 		got, err := models.MigrateTo(context.Background(), dbURL, *migrateTo)
@@ -112,13 +113,18 @@ func run() error {
 		fmt.Printf("schema at version %d\n", got)
 		return nil
 	}
-	port := os.Getenv("AGENTCHAT_PORT")
+	port := envx.Get("PORT")
 	if port == "" {
 		port = "8090"
 	}
-	publicURL := os.Getenv("AGENTCHAT_PUBLIC_URL")
+	publicURL := envx.Get("PUBLIC_URL")
 	if publicURL == "" {
 		publicURL = "http://localhost:" + port
+	}
+
+	if old := envx.LegacyInUse(os.Getenv, "DB_URL", "PORT", "PUBLIC_URL", "TRUST_PROXY",
+		"REGISTRATION_ENABLED", "SESSION_TTL"); len(old) > 0 {
+		slog.Warn("using deprecated AGENTCHAT_* environment variables; rename them to OPENFLOCK_*", "names", old)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -158,7 +164,7 @@ func run() error {
 	server := api.New(store, api.Config{
 		PublicURL:           publicURL,
 		Embedder:            embedder,
-		TrustProxy:          os.Getenv("AGENTCHAT_TRUST_PROXY") == "true",
+		TrustProxy:          envx.Get("TRUST_PROXY") == "true",
 		AccessClientID:      accessID,
 		AccessClientSecret:  accessSecret,
 		Providers:           authProviders(store, registration, os.Getenv),

@@ -2628,8 +2628,8 @@ func TestSkillHermesTwoModes(t *testing.T) {
 		t.Error("/skill/hermes leaked a backtick placeholder")
 	}
 	// the placeholder must not eat a home-directory path
-	if !strings.Contains(doc, "~/.agentchat/hermes-bridge.log") {
-		t.Error("/skill/hermes mangled the ~/.agentchat log path")
+	if !strings.Contains(doc, "~/.openflock/hermes-bridge.log") {
+		t.Error("/skill/hermes mangled the ~/.openflock log path")
 	}
 
 	// the banned flags may be named in the prohibition list, never in a command

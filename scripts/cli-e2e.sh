@@ -403,4 +403,47 @@ if "${A[@]}" search zebra --has photos >/dev/null 2>&1; then fail "--has photos 
 "${A[@]}" search zebra migration --json | jq_ 'd["results"][0]["via"]' | grep -q '^text$' || fail "text hit should say via=text"
 ok "search: hybrid endpoint, --from/--in/--after/--before/--kind/--has"
 
+# 18. rename compatibility (OpenFlock phase 2, step 1). An agent that has not
+# migrated must keep working, and a migrated one must be found without --env.
+FAKE="$WORK/fakehome"
+run_home() { HOME="$FAKE" "$CLI" "$@"; }
+
+mkdir -p "$FAKE/.agentchat"
+cp "$WORK/alice.env" "$FAKE/.agentchat/room.alice.agentchat.env"
+run_home whoami | grep -q '^alice ' || fail "an un-migrated ~/.agentchat must still be found"
+ok "un-migrated client directory still works"
+
+# an empty new directory must not hide a working old one: the join docs tell an
+# agent to mkdir ~/.openflock for cli.sh long before it moves its env file over
+mkdir -p "$FAKE/.openflock"
+run_home whoami | grep -q '^alice ' || fail "an empty ~/.openflock must not hide ~/.agentchat"
+ok "an ~/.openflock with no env file does not hide the old directory"
+
+cp "$WORK/bob.env" "$FAKE/.openflock/room.bob.openflock.env"
+run_home whoami | grep -q '^bob ' || fail "~/.openflock must win over ~/.agentchat"
+ok "migrated client directory wins, and the new env-file suffix is found"
+
+# the variables dual-read: the new name wins, the old one still carries. HOME is
+# empty in each, or the directory search would answer and prove nothing.
+mkdir -p "$WORK/empty"
+HOME="$WORK/empty" OPENFLOCK_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "OPENFLOCK_ENV ignored"
+HOME="$WORK/empty" AGENTCHAT_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "AGENTCHAT_ENV no longer works"
+HOME="$FAKE" OPENFLOCK_ENV="$WORK/alice.env" "$CLI" whoami | grep -q '^alice ' || fail "OPENFLOCK_ENV must beat the client directory"
+OPENFLOCK_SERVER="$SERVER" OPENFLOCK_TOKEN="$alice" HOME="$WORK/empty" "$CLI" whoami | grep -q '^alice ' || fail "OPENFLOCK_SERVER/TOKEN ignored"
+AGENTCHAT_SERVER="$SERVER" AGENTCHAT_TOKEN="$alice" HOME="$WORK/empty" "$CLI" whoami | grep -q '^alice ' || fail "AGENTCHAT_SERVER/TOKEN no longer work"
+ok "env vars read the OPENFLOCK_ name first and the AGENTCHAT_ one second"
+
+# --env alone must work with no HOME at all: a bridge under launchd or in a
+# container has none, and the client directory search must never be reached
+(unset HOME; "$CLI" --env "$WORK/alice.env" whoami) | grep -q '^alice ' || fail "--env must work with no HOME"
+ok "--env works with no HOME set"
+
+# the cursor cache follows the same rule as the client directory
+CACHE_HOME="$WORK/cachehome"
+mkdir -p "$CACHE_HOME/.cache/agentchat"
+HOME="$CACHE_HOME" XDG_CACHE_HOME= "$CLI" --env "$WORK/alice.env" mentions --since 0 >/dev/null || fail "mentions failed under the legacy cache"
+[ -n "$(ls -A "$CACHE_HOME/.cache/agentchat")" ] || fail "an existing ~/.cache/agentchat must keep being used"
+[ ! -d "$CACHE_HOME/.cache/openflock" ] || fail "a legacy cache must not be abandoned for a new one"
+ok "cursor cache stays in ~/.cache/agentchat when that is where it already is"
+
 echo CLI_E2E_OK

@@ -226,15 +226,15 @@ func TestWatcherTemplateDeclaresPresence(t *testing.T) {
 	script = strings.Replace(script, `WATCH="general" #`, `WATCH="" #`, 1)
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".agentchat"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".openflock"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".agentchat", "room.alice.env"), []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".openflock", "room.alice.env"), []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// alice's last watcher stood here, then she went offline and missed one
 	_, cursor := eventsAfter(t, alice, 0)
-	if err := os.WriteFile(filepath.Join(home, ".agentchat", "room.alice.cursor"), []byte(fmt.Sprint(cursor)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".openflock", "room.alice.cursor"), []byte(fmt.Sprint(cursor)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	alice.must("POST", "/api/v1/me/presence", map[string]any{"status": "offline"}, 200)

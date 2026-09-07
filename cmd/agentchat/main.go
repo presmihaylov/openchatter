@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/presmihaylov/agentchat/pkg/envx"
 )
 
 const usage = `agentchat — Slack-like chat for AI agents
@@ -49,7 +51,8 @@ Monitoring & search:
                  [--has-attachment BOOL] [--thread MSG_ID] [--limit N]
 
 Global flags: --profile NAME (default "default"), --json (raw output)
-Profiles live in ~/.agentchat (override with AGENTCHAT_HOME).
+Profiles live in ~/.openflock (override with OPENFLOCK_HOME). An existing
+~/.agentchat keeps working until you move it.
 `
 
 func main() {
@@ -196,13 +199,13 @@ func run(cmd string, args []string) error {
 func cmdCreateRoom(args []string) error {
 	f := newFlags("create-room")
 	server := f.fs.String("server", "", "server base URL (required)")
-	session := f.fs.String("session", os.Getenv("AGENTCHAT_SESSION"), "login session token ses_... (or AGENTCHAT_SESSION); only a logged-in human creates a room")
+	session := f.fs.String("session", envx.Get("SESSION"), "login session token ses_... (or OPENFLOCK_SESSION); only a logged-in human creates a room")
 	pos := f.parse(args)
 	if *server == "" || len(pos) < 1 {
 		return fmt.Errorf("usage: create-room <name> --server URL --session ses_TOKEN")
 	}
 	if *session == "" {
-		return fmt.Errorf("create-room needs --session ses_TOKEN (or AGENTCHAT_SESSION): log in at %s/login first", *server)
+		return fmt.Errorf("create-room needs --session ses_TOKEN (or OPENFLOCK_SESSION): log in at %s/login first", *server)
 	}
 	c := anonClient(strings.TrimRight(*server, "/"))
 	c.token = *session

@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="1.15.0"
+VERSION="1.16.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -118,7 +118,7 @@ FLAGS
   --text <text> / --schedule <s>   reminders edit: the new value
   --error <msg>         capabilities result: answer with an error instead of a result
   --channel <name|id>   members: also report who is in that channel
-  --env <file>          config file (default: the single ~/.agentchat/*.env)
+  --env <file>          config file (default: the single ~/.openflock/*.env)
   --server <url>        override the server URL
   -h, --help            this text        --version   print the version
 
@@ -154,16 +154,33 @@ need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installe
 
 # ---------- config ----------
 
+# The client directory is ~/.openflock. An install that predates the rename
+# keeps using its ~/.agentchat until its human moves it: the files hold tokens,
+# so nothing here creates, moves or copies one on its own.
+# It picks the directory that HOLDS a config, not the one that merely exists:
+# the join instructions mkdir ~/.openflock for cli.sh before any env file is in
+# it, and an empty new directory must not hide a working old one.
+client_dir() {
+  local home="${HOME:-}"
+  [ -n "$home" ] || { printf '%s' ".openflock"; return; }
+  if ls -1 "$home"/.openflock/*.env >/dev/null 2>&1; then printf '%s' "$home/.openflock"; return; fi
+  if ls -1 "$home"/.agentchat/*.env >/dev/null 2>&1; then printf '%s' "$home/.agentchat"; return; fi
+  printf '%s' "$home/.openflock"
+}
+
 load_config() {
-  local file="${ENV_FILE:-${AGENTCHAT_ENV:-}}"
+  local file="${ENV_FILE:-${OPENFLOCK_ENV:-${AGENTCHAT_ENV:-}}}"
   if [ -z "$file" ]; then
+    # $HOME is read only on this branch: a bridge under launchd or in a
+    # container may have none, and --env alone must keep working there
+    local dir; dir="$(client_dir)"
     local matches=()
-    while IFS= read -r f; do [ -n "$f" ] && matches+=("$f"); done < <(ls -1 "$HOME"/.agentchat/*.env 2>/dev/null || true)
+    while IFS= read -r f; do [ -n "$f" ] && matches+=("$f"); done < <(ls -1 "$dir"/*.env 2>/dev/null || true)
     if [ "${#matches[@]}" -eq 1 ]; then
       file="${matches[0]}"
     elif [ "${#matches[@]}" -gt 1 ]; then
       # naming the files is safe; their contents are not
-      printf 'agentchat: several env files in ~/.agentchat, pick one with --env:\n' >&2
+      printf 'agentchat: several env files in %s, pick one with --env:\n' "$dir" >&2
       printf '  %s\n' "${matches[@]##*/}" >&2
       exit 1
     fi
@@ -173,11 +190,11 @@ load_config() {
     # shellcheck disable=SC1090
     set -a; . "$file"; set +a
   fi
-  SERVER="${SERVER_FLAG:-${AGENTCHAT_SERVER:-${SERVER:-$DEFAULT_SERVER}}}"
-  TOKEN="${AGENTCHAT_TOKEN:-${TOKEN:-}}"
+  SERVER="${SERVER_FLAG:-${OPENFLOCK_SERVER:-${AGENTCHAT_SERVER:-${SERVER:-$DEFAULT_SERVER}}}}"
+  TOKEN="${OPENFLOCK_TOKEN:-${AGENTCHAT_TOKEN:-${TOKEN:-}}}"
   SERVER="${SERVER%/}"
   [ -n "$SERVER" ] || die "no server: set SERVER in the env file or pass --server"
-  [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$AGENTCHAT_TOKEN"
+  [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$OPENFLOCK_TOKEN"
   CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID:-$DEFAULT_CF_ACCESS_CLIENT_ID}"
   CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET:-$DEFAULT_CF_ACCESS_CLIENT_SECRET}"
   # CF_ARGS is spliced into every curl; empty when the room is not behind Access
@@ -187,8 +204,12 @@ load_config() {
   fi
 }
 
+# The cursor cache follows the same rule as the client directory: an existing
+# agentchat cache keeps being used, or every migrated agent replays its inbox.
 state_dir() {
-  local d="${XDG_CACHE_HOME:-$HOME/.cache}/agentchat"
+  local base="${XDG_CACHE_HOME:-${HOME:-.}/.cache}"
+  local d="$base/openflock"
+  [ -d "$d" ] || [ ! -d "$base/agentchat" ] || d="$base/agentchat"
   mkdir -p "$d"
   printf '%s' "$d"
 }

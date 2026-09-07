@@ -105,7 +105,7 @@ func getText(t *testing.T, url string) string {
 func harnessHome(t *testing.T, srvURL, token string) string {
 	t.Helper()
 	home := t.TempDir()
-	dir := filepath.Join(home, ".agentchat")
+	dir := filepath.Join(home, ".openflock")
 	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -203,14 +203,14 @@ func TestBridgeRunsOneTurnPerEvent(t *testing.T) {
 			t.Fatalf("turn prompt lacks %q:\n%s", want, got)
 		}
 	}
-	log, _ := os.ReadFile(filepath.Join(home, ".agentchat", "room.alice.bridge.log"))
+	log, _ := os.ReadFile(filepath.Join(home, ".openflock", "room.alice.bridge.log"))
 	if !strings.Contains(string(log), "BRIDGE-TURN:") {
 		t.Fatalf("bridge log lacks the turn:\n%s", log)
 	}
 	if strings.Contains(out+string(log)+got, "sk-test-do-not-leak") {
 		t.Fatal("the key leaked into output, log or prompt")
 	}
-	if spool, _ := os.ReadFile(filepath.Join(home, ".agentchat", "room.alice.spool")); len(bytes.TrimSpace(spool)) != 0 {
+	if spool, _ := os.ReadFile(filepath.Join(home, ".openflock", "room.alice.spool")); len(bytes.TrimSpace(spool)) != 0 {
 		t.Fatalf("spool not drained after the turn:\n%s", spool)
 	}
 	if !strings.Contains(string(log), "BRIDGE-ERROR") == false {
@@ -227,7 +227,7 @@ func TestBridgeReplaysSpool(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, alice, _ := setupRoom(t, srv.URL)
 	home := harnessHome(t, srv.URL, alice.token)
-	spool := filepath.Join(home, ".agentchat", "room.alice.spool")
+	spool := filepath.Join(home, ".openflock", "room.alice.spool")
 	if err := os.WriteFile(spool, []byte("REPLY-TO abc in general: bob: left over\t{\"seq\":1,\"type\":\"message.created\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestInjectDeliversLine(t *testing.T) {
 	script := fillScript(t, srv.URL, "inject.sh", map[string]string{`DELIVER="<tmux|herdr|opencode|codex>"`: `DELIVER="tmux"`})
 	lines := filepath.Join(home, "lines.log")
 	out := runScriptPosting(t, script, home, []string{
-		`AGENTCHAT_DELIVER_CMD=printf '%s\n' "$AGENTCHAT_LINE" >> ` + lines,
+		`OPENFLOCK_DELIVER_CMD=printf '%s\n' "$OPENFLOCK_LINE" >> ` + lines,
 	}, func() {
 		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice ping"}, 201)
 	})
@@ -297,7 +297,7 @@ func TestBridgeStormGuard(t *testing.T) {
 	script := fillScript(t, srv.URL, "bridge.sh", map[string]string{`HARNESS="<codex|opencode|pi>"`: `HARNESS="opencode"`})
 	turns := filepath.Join(home, "turns.log")
 	out := runScriptPosting(t, script, home, []string{
-		`AGENTCHAT_TURN_CMD=printf 'T\n' >> ` + turns,
+		`OPENFLOCK_TURN_CMD=printf 'T\n' >> ` + turns,
 		"AGENTCHAT_STORM_MAX=2", "AGENTCHAT_STORM_WINDOW=60", "AGENTCHAT_STORM_PAUSE=1",
 	}, func() {
 		for i := 0; i < 5; i++ {
@@ -310,5 +310,40 @@ func TestBridgeStormGuard(t *testing.T) {
 	raw, _ := os.ReadFile(turns)
 	if n := strings.Count(string(raw), "T\n"); n >= 5 {
 		t.Fatalf("all %d turns ran despite the guard", n)
+	}
+}
+
+// TestTemplatesDualReadEveryVariable: the compatibility release renamed the
+// harness variables, and an agent's bridge keeps its old exports until its human
+// migrates it. One dropped fallback silences that agent with no error at all,
+// so every pair is asserted here rather than one pair per expensive live run.
+func TestTemplatesDualReadEveryVariable(t *testing.T) {
+	srv, _ := newTestServer(t)
+	for _, tc := range []struct {
+		script string
+		want   []string
+	}{
+		{"bridge.sh", []string{
+			`${OPENFLOCK_TURN_CMD:-${AGENTCHAT_TURN_CMD:-`,
+			`${OPENFLOCK_STORM_MAX:-${AGENTCHAT_STORM_MAX:-5`,
+			`${OPENFLOCK_STORM_WINDOW:-${AGENTCHAT_STORM_WINDOW:-60`,
+			`${OPENFLOCK_STORM_PAUSE:-${AGENTCHAT_STORM_PAUSE:-300`,
+			// the turn sees the prompt under both names
+			`AGENTCHAT_PROMPT="$OPENFLOCK_PROMPT"`,
+		}},
+		{"inject.sh", []string{
+			`${OPENFLOCK_DELIVER_CMD:-${AGENTCHAT_DELIVER_CMD:-`,
+			`OPENFLOCK_LINE="$1" AGENTCHAT_LINE="$1"`,
+		}},
+		{"watch.sh", []string{
+			`${OPENFLOCK_WAKE_CMD:-${AGENTCHAT_WAKE_CMD:-`,
+		}},
+	} {
+		got := getText(t, srv.URL+"/skill/"+tc.script)
+		for _, want := range tc.want {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s lost the compatibility read %q", tc.script, want)
+			}
+		}
 	}
 }

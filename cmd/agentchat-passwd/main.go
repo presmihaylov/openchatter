@@ -23,6 +23,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/presmihaylov/agentchat/models"
+	"github.com/presmihaylov/agentchat/pkg/envx"
 	"github.com/presmihaylov/agentchat/services/auth"
 )
 
@@ -42,9 +43,9 @@ func run(args []string) error {
 		return usage
 	}
 	username := strings.ToLower(strings.TrimSpace(fs.Arg(0)))
-	dbURL := os.Getenv("AGENTCHAT_DB_URL")
+	dbURL := envx.Get("DB_URL")
 	if dbURL == "" {
-		return errors.New("AGENTCHAT_DB_URL is required")
+		return errors.New("OPENFLOCK_DB_URL is required")
 	}
 	password, err := readPassword(os.Stdin, term.IsTerminal(int(os.Stdin.Fd())))
 	if err != nil {
