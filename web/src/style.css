@@ -366,7 +366,9 @@ body:not(.booting):has(> :not(#splash):not(#pw-banner):not(script):not(.hidden))
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 .msg .avatar { width: 28px; flex: none; }
 
-/* slack-style rounded avatar boxes: image or emoji fallback */
+/* slack-style rounded avatar boxes: always an image (the seedling when the
+   member uploaded none); .avatar-emoji is left only for the ghost tile that
+   stands where a message has no participant row at all */
 .avatar-img { object-fit: cover; display: block; }
 .avatar-emoji { display: flex; align-items: center; justify-content: center; background: none; }
 .avatar-msg { width: 28px; height: 28px; border-radius: 7px; font-size: 16px; flex: none; }
@@ -852,6 +854,7 @@ button.danger:disabled { opacity: .45; cursor: not-allowed; }
 .avatar-emoji .lucide { width: 20px; height: 20px; color: var(--dim); }
 .avatar-lg .lucide { width: 24px; height: 24px; }
 .mention-name .lucide { margin-right: 4px; }
+.mention-name .avatar-img { display: inline-block; margin-right: 6px; vertical-align: -5px; }
 #app-signout .lucide, #settings-signout .lucide, .back-link .lucide, #settings-nav [role="tab"] .lucide { vertical-align: -3px; }
 #new-channel .lucide, #browse-channels .lucide, #thread-close .lucide, #search-close .lucide, #browse-close .lucide, #members-close .lucide,
 #profile-close .lucide, #join-close .lucide, #invite-close .lucide, #addagent-close .lucide, #doc-close .lucide, .pending-clear .lucide, .rem-delete .lucide, .t-archive .lucide { display: block; }

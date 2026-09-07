@@ -1298,44 +1298,54 @@ func TestMemberMintsOwnAgentLink(t *testing.T) {
 
 // A member that sets no avatar starts as a seedling: on join, on /enter and
 // on workspace create. An explicit avatar still wins.
-func TestDefaultAvatarIsSeedling(t *testing.T) {
+// TestEmojiAvatarIsGone: an avatar is an image. The emoji field is still read
+// on join and on PATCH /me so an old client does not start getting 4xx, but it
+// is never stored and never handed back: no payload carries an `avatar` key,
+// so nothing downstream can render a glyph in place of a picture.
+func TestEmojiAvatarIsGone(t *testing.T) {
 	srv, _ := newTestServer(t)
-	secret, _, _ := setupRoom(t, srv.URL)
+	secret, alice, _ := setupRoom(t, srv.URL)
 
-	bot := (&testClient{t: t, base: srv.URL}).must("POST", "/api/v1/rooms/join",
-		map[string]any{"invite": secret, "name": "sprout"}, 201)["participant"].(map[string]any)
-	if bot["avatar"] != models.DefaultAvatar {
-		t.Fatalf("agent default avatar: %v", bot["avatar"])
+	noAvatar := func(what string, row map[string]any) {
+		t.Helper()
+		if v, ok := row["avatar"]; ok {
+			t.Fatalf("%s still carries an emoji avatar: %v", what, v)
+		}
 	}
-	human := (&testClient{t: t, base: srv.URL}).must("POST", "/api/v1/rooms/join",
-		map[string]any{"invite": secret, "name": "newbie", "is_human": true}, 201)["participant"].(map[string]any)
-	if human["avatar"] != models.DefaultAvatar {
-		t.Fatalf("human default avatar: %v", human["avatar"])
-	}
-	// an explicit avatar still wins, and clearing it later falls back to the default
+
 	pc := &testClient{t: t, base: srv.URL}
 	row := pc.must("POST", "/api/v1/rooms/join",
 		map[string]any{"invite": secret, "name": "picky", "avatar": "\U0001F984"}, 201)
 	pc.token = row["token"].(string)
-	if row["participant"].(map[string]any)["avatar"] != "\U0001F984" {
-		t.Fatalf("explicit avatar overwritten: %v", row["participant"])
+	noAvatar("join reply", row["participant"].(map[string]any))
+
+	// the old field is accepted and dropped, and the rest of the patch lands
+	me := pc.must("PATCH", "/api/v1/me", map[string]any{"avatar": "\U0001F984", "description": "still here"}, 200)
+	noAvatar("PATCH /me", me)
+	if me["description"] != "still here" {
+		t.Fatalf("description did not update alongside the ignored avatar: %v", me["description"])
 	}
-	if got := pc.must("PATCH", "/api/v1/me", map[string]any{"avatar": ""}, 200)["avatar"]; got != models.DefaultAvatar {
-		t.Fatalf("clearing an avatar must fall back to the default, got %v", got)
+	noAvatar("GET /me", pc.must("GET", "/api/v1/me", nil, 200))
+
+	for _, p := range alice.must("GET", "/api/v1/participants", nil, 200)["participants"].([]any) {
+		noAvatar("participants list", p.(map[string]any))
+	}
+
+	// removing an uploaded image leaves no emoji behind to fall back to
+	gone := pc.must("DELETE", "/api/v1/me/avatar", nil, 200)
+	noAvatar("DELETE /me/avatar", gone)
+	if v, ok := gone["avatar_attachment_id"]; ok {
+		t.Fatalf("avatar attachment survived the delete: %v", v)
 	}
 
 	// a session user creating a workspace, and another entering one
 	creator, _, room := sessionRoom(t, srv.URL, "seedbed")
-	if got := creator.must("GET", "/api/v1/me", nil, 200)["avatar"]; got != models.DefaultAvatar {
-		t.Fatalf("workspace creator avatar: %v", got)
-	}
+	noAvatar("workspace creator", creator.must("GET", "/api/v1/me", nil, 200))
 	member, _ := registerAs(t, srv.URL, "Mia Member")
 	member.slug = room["slug"].(string)
 	entered := member.must("POST", "/api/v1/workspaces/"+member.slug+"/enter",
 		map[string]any{"invite": room["invite"]}, 200)["participant"].(map[string]any)
-	if entered["avatar"] != models.DefaultAvatar {
-		t.Fatalf("entering member avatar: %v", entered["avatar"])
-	}
+	noAvatar("entering member", entered)
 }
 
 // TestInviteLinkLimits: expiry refuses new members; there is no use cap (the

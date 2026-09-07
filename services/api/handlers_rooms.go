@@ -133,9 +133,11 @@ func writeWorkspaceForbidden(w http.ResponseWriter, reason string) {
 type joinRoomReq struct {
 	Invite string `json:"invite"`
 	// older clients sent the bare code under these names
-	InviteCode  string `json:"invite_code"`
-	Secret      string `json:"secret"`
-	Name        string `json:"name"`
+	InviteCode string `json:"invite_code"`
+	Secret     string `json:"secret"`
+	Name       string `json:"name"`
+	// legacy emoji avatar: still parsed so an old client's join does not 4xx,
+	// never stored, never rendered. Drop the field after one release.
 	Avatar      string `json:"avatar"`
 	Description string `json:"description"`
 	IsHuman     bool   `json:"is_human"`
@@ -159,11 +161,8 @@ func (s *Server) handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "that name is reserved")
 		return
 	}
-	if req.Avatar == "" {
-		req.Avatar = models.DefaultAvatar
-	}
-	if len(req.Avatar) > 300 || len(req.Description) > 2000 {
-		writeErr(w, http.StatusBadRequest, "avatar or description too long")
+	if len(req.Description) > 2000 {
+		writeErr(w, http.StatusBadRequest, "description too long")
 		return
 	}
 
@@ -194,7 +193,9 @@ func (s *Server) handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	token, hash := secrets.NewToken()
 	var p models.Participant
-	p, err = s.store.CreateParticipant(r.Context(), room.ID, req.Name, req.Avatar, req.Description, req.IsHuman, hash, newOwner, nil, inv.ID)
+	// req.Avatar is read and dropped: an avatar is an image, uploaded after the
+	// join, and every member without one shows the same seedling.
+	p, err = s.store.CreateParticipant(r.Context(), room.ID, req.Name, models.DefaultAvatar, req.Description, req.IsHuman, hash, newOwner, nil, inv.ID)
 	if errors.Is(err, models.ErrConflict) {
 		// same name = same identity: re-claim it with a fresh token so a
 		// restarted agent does not pile up orphan duplicates

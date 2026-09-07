@@ -111,12 +111,12 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   fs.writeFileSync(tmp, PNG);
   const input = await page.$('#avatar-input');
   await input.uploadFile(tmp);
-  await page.waitForSelector('#settings-avatar img', { timeout: 8000 });
+  await page.waitForFunction(() => ((document.querySelector('#settings-avatar img') || {}).getAttribute('src') || '').startsWith('blob:'), { timeout: 8000 });
   await page.waitForSelector('#avatar-remove:not(.hidden)', { timeout: 8000 });
   let me = await api('/api/v1/me', { token: adminSession, slug });
   assert(me.avatar_attachment_id, 'avatar not stored');
   await page.click('#avatar-remove');
-  await page.waitForSelector('#settings-avatar .avatar-emoji', { timeout: 8000 });
+  await page.waitForFunction(() => (document.querySelector('#settings-avatar img') || {}).getAttribute('src') === '/brand/avatar-default-512.png', { timeout: 8000 });
   me = await api('/api/v1/me', { token: adminSession, slug });
   assert(!me.avatar_attachment_id, 'avatar not removed');
   await page.click('#notify-sound');

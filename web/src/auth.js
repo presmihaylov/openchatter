@@ -657,18 +657,13 @@ const personalWorkspaceBits = async (slug, roomName) => {
     const slot = $('settings-avatar');
     slot.innerHTML = '';
     $('avatar-remove').classList.toggle('hidden', !me.avatar_attachment_id);
-    if (!me.avatar_attachment_id) {
-      const span = document.createElement('span');
-      span.className = 'avatar-lg avatar-emoji';
-      if (me.avatar) span.textContent = me.avatar;
-      if (!me.avatar) span.innerHTML = ICON.ghost;
-      slot.appendChild(span);
-      return;
-    }
+    // the seedling stands here until an upload lands, and again after Remove
     const img = document.createElement('img');
     img.className = 'avatar-lg avatar-img';
     img.alt = me.name;
+    img.src = '/brand/avatar-default-512.png';
     slot.appendChild(img);
+    if (!me.avatar_attachment_id) return;
     try {
       const resp = await fetch('/api/v1/attachments/' + me.avatar_attachment_id + '?size=512', { headers: { 'Authorization': 'Bearer ' + sessionToken(), 'X-Workspace-Slug': slug } });
       if (resp.ok) img.src = URL.createObjectURL(await resp.blob());

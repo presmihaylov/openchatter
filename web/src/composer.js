@@ -119,9 +119,12 @@ export const createComposer = ({ mount, id, placeholder, onSubmit, onChange, get
   const renderMention = () => renderList(mentionBox, mention, (d, it) => {
     const name = document.createElement('span');
     name.className = 'mention-name';
-    // @channel-style rows carry a chrome icon instead of an avatar emoji
+    // @channel-style rows carry a chrome icon; a member row carries their avatar
     if (it.icon) { name.innerHTML = it.icon; name.appendChild(document.createTextNode(it.name)); }
-    if (!it.icon) name.textContent = `${it.avatar} ${it.name}`;
+    if (!it.icon) {
+      if (it.avatar) name.appendChild(it.avatar());
+      name.appendChild(document.createTextNode(it.name));
+    }
     d.appendChild(name);
     // they rank last, so say why instead of letting the sender guess
     if (it.inChannel === false) {
@@ -223,7 +226,7 @@ export const createComposer = ({ mount, id, placeholder, onSubmit, onChange, get
     // broadcasts always apply to the channel you are in, so they rank with the
     // members rather than below the whole room
     const opts = getMentionOptions().concat(
-      ['channel', 'everyone', 'here'].map((name) => ({ name, avatar: '', icon: ICON.megaphone, inChannel: true })));
+      ['channel', 'everyone', 'here'].map((name) => ({ name, icon: ICON.megaphone, inChannel: true })));
     mention.items = rankMentions(opts, m[2].toLowerCase()).slice(0, 8);
     mention.sel = 0;
     renderMention();

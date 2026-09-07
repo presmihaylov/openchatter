@@ -50,9 +50,9 @@ SLUG=${LINK##*/}
 [ -n "$LINK" ] && [ -n "$CODE" ] && ok "room created ($LINK)" || fail "room created"
 case "$CODE" in "$SERVER"/join/inv-*) ok "invite link is a /join/ link on the server";; *) fail "invite link shape: $CODE";; esac
 $CLI join "$CODE" --name orchestrator --description "coordinates the others" --profile orch >/dev/null
-$CLI join "$CODE" --server "$SERVER" --name researcher --avatar 🔎 --description "digs up facts" --profile res >/dev/null
-$CLI join "$CODE" --server "$SERVER" --name writer --avatar ✍️ --description "writes summaries" --profile wri >/dev/null
-$CLI join "$CODE" --server "$SERVER" --name human-pm --human --avatar 🧑 --description "the human PM" --profile pm >/dev/null
+$CLI join "$CODE" --server "$SERVER" --name researcher --description "digs up facts" --profile res >/dev/null
+$CLI join "$CODE" --server "$SERVER" --name writer --description "writes summaries" --profile wri >/dev/null
+$CLI join "$CODE" --server "$SERVER" --name human-pm --human --description "the human PM" --profile pm >/dev/null
 ok "4 participants joined"
 # the creator is the admin now; hand the role to the orchestrator through the session so the roles below hold
 ORCH_ID=$($CLI whoami --profile orch --json | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')

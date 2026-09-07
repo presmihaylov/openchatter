@@ -370,19 +370,26 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     return blobURLs[key];
   };
   const loadAvatarInto = (attID, img, size) => blobURL(attID, size).then((url) => { if (url) img.src = url; });
+  // An avatar is an image, always. A member who never uploaded one shows the
+  // shared seedling at the same two sizes, so nothing per-member is invented
+  // and no emoji ever stands in. The seedling is also the src while an
+  // uploaded image is still fetching, and what stays if that fetch fails.
+  const DEFAULT_AVATAR = (size) => '/brand/avatar-default-' + size + '.png';
   const avatarCore = (p, cls) => {
-    if (p && p.avatar_attachment_id) {
-      const img = document.createElement('img');
-      img.className = cls + ' avatar-img';
-      img.alt = p.name;
-      loadAvatarInto(p.avatar_attachment_id, img, cls === 'avatar-lg' ? 512 : 128);
-      return img;
+    // no participant row at all (deleted author): a chrome icon, not an avatar
+    if (!p) {
+      const span = document.createElement('span');
+      span.className = cls + ' avatar-emoji';
+      span.innerHTML = ICON.ghost;
+      return span;
     }
-    const span = document.createElement('span');
-    span.className = cls + ' avatar-emoji';
-    if (p) span.textContent = p.avatar;
-    if (!p) span.innerHTML = ICON.ghost;
-    return span;
+    const size = cls === 'avatar-lg' ? 512 : 128;
+    const img = document.createElement('img');
+    img.className = cls + ' avatar-img';
+    img.alt = p.name;
+    img.src = DEFAULT_AVATAR(size);
+    if (p.avatar_attachment_id) loadAvatarInto(p.avatar_attachment_id, img, size);
+    return img;
   };
   // Owner badge: overlay the human owner's avatar bottom-right, Slack-app-badge style.
   // Only for agents with a server-verified owner. Skipped on avatar-rb (reply-bar
@@ -2954,7 +2961,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const now = Date.now();
     return participants.map((p) => ({
       name: p.name,
-      avatar: p.avatar,
+      // the picker draws the member's real avatar image, never a stand-in glyph
+      avatar: () => avatarCore(p, 'avatar-sm'),
       inChannel: inCh.has(p.id),
       online: !!p.online,
       dormant: !!p.last_seen_at && now - Date.parse(p.last_seen_at) > DORMANT_MS,

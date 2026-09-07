@@ -42,10 +42,13 @@ type Tag struct {
 }
 
 type Participant struct {
-	ID                 string  `json:"id"`
-	RoomID             string  `json:"room_id"`
-	Name               string  `json:"name"`
-	Avatar             string  `json:"avatar"`
+	ID     string `json:"id"`
+	RoomID string `json:"room_id"`
+	Name   string `json:"name"`
+	// Avatar is the legacy emoji column. Nothing renders it any more: a member
+	// shows their uploaded image, or the shared seedling. Kept off the wire so
+	// no client can start drawing it again; the column goes next release.
+	Avatar             string  `json:"-"`
 	AvatarAttachmentID *string `json:"avatar_attachment_id,omitempty"`
 	Description        string  `json:"description"`
 	IsHuman            bool    `json:"is_human"`

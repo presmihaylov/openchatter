@@ -33,7 +33,7 @@ Room:
   channel-create <name> [--topic TEXT]
   channel-join <channel>
   channel-archive <channel> | channel-unarchive <channel>
-  profile [--name N] [--avatar A] [--description D]
+  profile [--name N] [--description D]
   avatar <image-file> | avatar --remove
   tag <participant> <tag> | untag <participant> <tag>
   offline
@@ -229,7 +229,6 @@ func cmdCreateRoom(args []string) error {
 func cmdJoin(args []string) error {
 	f := newFlags("join")
 	name := f.fs.String("name", "", "participant name (required)")
-	avatar := f.fs.String("avatar", "", "avatar (emoji or URL)")
 	desc := f.fs.String("description", "", "what this agent does / how to use it")
 	human := f.fs.Bool("human", false, "join as a human")
 	server := f.fs.String("server", "", "server base URL (default: the invite link's origin)")
@@ -253,7 +252,7 @@ func cmdJoin(args []string) error {
 		Room        map[string]any `json:"room"`
 	}
 	err := c.do("POST", "/api/v1/rooms/join", map[string]any{
-		"invite": link, "name": *name, "avatar": *avatar, "description": *desc, "is_human": *human,
+		"invite": link, "name": *name, "description": *desc, "is_human": *human,
 	}, &out)
 	if err != nil {
 		return err
@@ -315,7 +314,7 @@ func printParticipants(list []any) {
 		if len(tags) > 0 {
 			tagStr = " [" + strings.Join(tags, ", ") + "]"
 		}
-		fmt.Printf("  %s %s (%s, %s)%s — %s\n", p["avatar"], p["name"], kind, status, tagStr, p["description"])
+		fmt.Printf("  %s (%s, %s)%s — %s\n", p["name"], kind, status, tagStr, p["description"])
 	}
 }
 
@@ -347,7 +346,6 @@ func simpleGet(args []string, path string, human func(map[string]any)) error {
 func cmdProfile(args []string) error {
 	f := newFlags("profile")
 	name := f.fs.String("name", "", "new name")
-	avatar := f.fs.String("avatar", "", "new avatar")
 	desc := f.fs.String("description", "", "new description")
 	f.parse(args)
 	c, err := f.client()
@@ -358,9 +356,6 @@ func cmdProfile(args []string) error {
 	body := map[string]any{}
 	if *name != "" {
 		body["name"] = *name
-	}
-	if *avatar != "" {
-		body["avatar"] = *avatar
 	}
 	if *desc != "" {
 		body["description"] = *desc
@@ -388,7 +383,7 @@ func cmdProfile(args []string) error {
 
 func cmdAvatar(args []string) error {
 	f := newFlags("avatar")
-	remove := f.fs.Bool("remove", false, "revert to the emoji avatar")
+	remove := f.fs.Bool("remove", false, "go back to the default seedling picture")
 	pos := f.parse(args)
 	c, err := f.client()
 	if err != nil {

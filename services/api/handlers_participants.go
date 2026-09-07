@@ -24,7 +24,10 @@ func (s *Server) handleGetMe(w http.ResponseWriter, r *http.Request, p models.Pa
 }
 
 type updateMeReq struct {
-	Name        *string `json:"name"`
+	Name *string `json:"name"`
+	// Legacy emoji avatar. Read and ignored for one release so an old client
+	// does not start getting 4xx; an avatar is an image, set with
+	// POST /api/v1/me/avatar. Drop the field after that.
 	Avatar      *string `json:"avatar"`
 	Description *string `json:"description"`
 }
@@ -42,19 +45,11 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request, p models
 		writeErr(w, http.StatusBadRequest, "that name is reserved")
 		return
 	}
-	if req.Avatar != nil && len(*req.Avatar) > 300 {
-		writeErr(w, http.StatusBadRequest, "avatar too long")
-		return
-	}
-	if req.Avatar != nil && *req.Avatar == "" {
-		// clearing the emoji leaves a blank row otherwise
-		req.Avatar = &defaultAvatar
-	}
 	if req.Description != nil && len(*req.Description) > 2000 {
 		writeErr(w, http.StatusBadRequest, "description too long")
 		return
 	}
-	me, err := s.store.UpdateProfile(r.Context(), p.RoomID, p.ID, req.Name, req.Avatar, req.Description)
+	me, err := s.store.UpdateProfile(r.Context(), p.RoomID, p.ID, req.Name, nil, req.Description)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -63,7 +58,7 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request, p models
 }
 
 // handleSetAvatar uploads a profile image (stored like any attachment) and
-// points the caller's avatar at it. The emoji avatar stays as the fallback.
+// points the caller's avatar at it. Without one the member shows the seedling.
 func (s *Server) handleSetAvatar(w http.ResponseWriter, r *http.Request, p models.Participant) {
 	meta, ok := s.readAvatarUpload(w, r, p)
 	if !ok {
@@ -168,7 +163,6 @@ const presenceCatchupCap = 500
 // message events (mentions, its threads, root broadcasts) since it went
 // offline, past the caller's own cursor when it sends one, so a watcher
 // never hears an event twice. A second online returns an empty batch.
-var defaultAvatar = models.DefaultAvatar
 
 func (s *Server) handlePresence(w http.ResponseWriter, r *http.Request, p models.Participant) {
 	if p.IsHuman {
