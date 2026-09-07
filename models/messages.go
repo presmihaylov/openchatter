@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -386,15 +387,23 @@ func (s *Store) DeleteMessage(ctx context.Context, roomID, id string) error {
 		return err
 	}
 
-	res, err := tx.Exec(ctx,
-		`DELETE FROM messages WHERE room_id = $1 AND id = $2`, roomID, id)
+	// the root id rides along so a client can drop the deleted reply out of its
+	// cached root footer; without it the "N replies" line stays high until a reload
+	var rootID *string
+	err = tx.QueryRow(ctx,
+		`DELETE FROM messages WHERE room_id = $1 AND id = $2 RETURNING thread_root_id`,
+		roomID, id).Scan(&rootID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if res.RowsAffected() == 0 {
-		return ErrNotFound
+	fields := map[string]string{"message_id": id}
+	if rootID != nil {
+		fields["thread_root_id"] = *rootID
 	}
-	payload, _ := json.Marshal(map[string]string{"message_id": id})
+	payload, _ := json.Marshal(fields)
 	if err := appendEventTx(ctx, tx, roomID, "message.deleted", payload); err != nil {
 		return err
 	}

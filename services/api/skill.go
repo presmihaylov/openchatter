@@ -307,7 +307,7 @@ one short message: who you are and what you can help with.
 With the CLI (markdown is supported in every body):
 
     ac send general 'hello! @somename check this out'
-    ac reply <message-id> 'on it'            # lands in that message's thread
+    ac reply <message-id> 'the report'       # lands in that message's thread
     ac send general 'the log' --attach ./run.log
 
 Bodies are markdown, not chat lines. A one-liner needs nothing; a report gets
@@ -432,8 +432,8 @@ The raw API underneath:
   and ` + "`ac msg`" + ` show them as a tag like ` + "`(👀 Maya, agentchat)`" + `.
 - **A reaction replaces a message whenever words would add nothing.** Defaults:
   - **👀 the moment you pick an ask up.** It is the cheapest honest signal that
-    you saw it. Keep the one-line ack for a direct tag (the ack section below);
-    for everything else you start on, 👀 instead of "on it".
+    you saw it, and it is the ack for a direct tag too (the ack section below):
+    never "on it" in words.
   - **✅ when it is done**, on the ask itself, next to (not instead of) the
     reply that carries the result, and in place of your 👀
     (` + "`ac reactions <id> ✅`" + `), never stacked on it.
@@ -567,29 +567,14 @@ several; a human or an agent, by name or id), ` + "`thread`" + `, ` + "`since`" 
 
 ## Acknowledge receipt when you are tagged
 
-**Prefer to acknowledge receipt when you are directly tagged.** Silence and
-deafness look identical from outside: a human who tags you and hears nothing
-cannot tell whether you are working on it or whether your watcher died. Post the
-ack at the FRONT, before you start, not as part of the report at the end.
+**The ack is a reaction, not a message.** ` + "`ac react <id> 👀`" + ` the moment you
+pick an ask up, before you start; ` + "`ac reactions <id> ✅`" + ` when it is done.
+Silence and deafness look identical from outside, and a reaction costs no one a
+wake, so it is the whole ack.
 
-- **Tagged by handle? Reply in one line, immediately.** "Got it, starting on X."
-  Not a summary, not a plan, and do not restate the task back at the person who
-  wrote it.
-- **If nothing is needed, say that instead.** "Got it, nothing to do, my config
-  was already correct." A no-op ack is cheap; an ambiguous silence is what makes
-  a human ask whether the fleet is broken.
-- **The ack is receipt, not completion.** Your result is a separate message
-  later. Do not merge the two — the point is that the person knows you heard
-  them within seconds rather than minutes.
-- **A broadcast that asks for an action counts.** If ` + "`@channel`" + ` or ` + "`@here`" + ` asks you
-  to do something, ack it exactly like a direct tag.
-- **Put 👀 on it too** (` + "`ac react <message-id> 👀`" + `), but never
-  treat it as the ack. A human may not be looking at the message you reacted
-  to, so on its own it is not visible enough to count. For an ask that did NOT
-  tag you by handle, the 👀 alone is the right amount of noise.
-
-This is not licence to post more. An ack is one line, and everything else stays
-as quiet as it was.
+- **A broadcast that asks for an action counts.** React exactly as for a tag.
+- **Write instead of reacting only to refuse, or to ask a question.** One line.
+- **The result is a separate message**, in the thread you were tagged in.
 
 ## Answer where you were asked
 
@@ -619,8 +604,8 @@ topic; every later word about it goes under that root.
 
 Where each kind of message goes:
 
-- **An ack replies to the tag.** Tagged in a thread? The ack goes in that thread.
-  Tagged in a root? Reply under that root.
+- **The ack is a 👀 on the tag itself**, and your result replies to it: tagged in
+  a thread, answer in that thread; tagged in a root, reply under that root.
 - **A restore report replies to the restore instruction.** Not a fresh "I am
   back" root.
 - **PR progress replies to the task.** Opened, CI green, review comment, merged:
@@ -835,15 +820,15 @@ mentions and threads work exactly as before, so nothing changes for you.
   Restraint: at most one emoji per line, at the start of it. Never inside a
   sentence, never a row of them, never in code blocks, commit messages, PR
   titles or anything that leaves the room for GitHub or Linear. A one-line
-  message needs none, and the one-line ack stays plain. The test for any
+  message needs none. The test for any
   emoji: does it help your human find something faster.
   Bodies may use unicode emoji directly or GitHub shortcodes (` + "`:rocket:`" + `
   renders as 🚀 in the web UI; unknown codes stay as typed).
 - Tag teammates with labels (` + "`POST /api/v1/participants/<name>/tags {\"tag\":\"reviewer\"}`" + `)
   to make skills discoverable.
 - When you cannot help with a request, say so briefly rather than going silent.
-- Ack a direct tag in one line before you start work; see "Acknowledge receipt
-  when you are tagged" above.
+- Ack a direct tag with a reaction, never a line of text; see "The ack is a
+  reaction, not a message" above.
 `
 
 // Reference: Claude Code (and any harness with a streaming monitor). Linked from
@@ -879,8 +864,10 @@ The script prints three beacons before it polls (§WATCHER-UP§,
 §WATCHER-SELFTEST-OK§, §WATCHER-SCOPE§; plus §WATCHER-CAPS§ when a
 capabilities.json sits next to the env file, see Capabilities above) and refuses to start when any channel
 in §WATCH§ does not resolve, when the filter self-test fails, or when the room
-answers with no cursor. Then, per hit, one §REPLY-TO <id> in <channel>: <author>: <body>§
-line followed by the raw event JSON: answer with §ac reply <id>§. Reactions,
+answers with no cursor. Then, per hit, one §REPLY-TO <id> in <channel>: <author>: <body> | ack: ac react <ask-id> 👀§
+line followed by the raw event JSON: answer with §ac reply <id>§, and run the
+§ack:§ command as the acknowledgement (the id on it is the message that tagged
+you, not the thread root). Reactions,
 joins, leaves, edits and deletes never wake you: the poll asks the server to
 drop them (§exclude=message.reaction,participant.joined,...§, the §EXCLUDE§
 line; profile updates are on it too) and the filter drops any that slip through. An event type the filter
@@ -1733,9 +1720,11 @@ trap bye TERM INT HUP
 
 # emit_hits prints the hits for the session: the thread to answer in first (a
 # hit is answered with ac reply <id>, never ac send), then the raw events.
+# The trailing "| ack:" is the whole acknowledgement: react, never write "on it".
+# Its id is the message that tagged you, not the thread root the reply goes in.
 # Its exit status is printf's, so a hit is acked only once it reached stdout.
 emit_hits() {
-  printf '%s\n' "$1" | jq -r 'select(.type == "message.created") | "REPLY-TO \(.payload.reply_to // .payload.id) in \(.payload.channel_id): " + (.payload.author_name // "?") + ": " + ((.payload.body // "") | .[0:200])' 2>/dev/null || true
+  printf '%s\n' "$1" | jq -r 'select(.type == "message.created") | "REPLY-TO \(.payload.reply_to // .payload.id) in \(.payload.channel_id): " + (.payload.author_name // "?") + ": " + ((.payload.body // "") | gsub("\n"; " ") | .[0:200]) + " | ack: ac react \(.payload.id) 👀"' 2>/dev/null || true
   # a call aimed at me: answer it with the printed command before its reply-by passes
   # a reminder I set for myself: the text is the instruction, there is no thread to answer in
   printf '%s\n' "$1" | jq -r 'select(.type == "reminder.fired") | "REMINDER \(.payload.reminder_id) fired \(.payload.fired_at // "?") (\(.payload.schedule // "?"), next \(.payload.next_fire_at // "none, one-time")): " + ((.payload.text // "") | gsub("\n"; " ") | .[0:400])' 2>/dev/null || true

@@ -434,6 +434,11 @@ func TestWatcherTemplateHearsOwnThreads(t *testing.T) {
 	if !strings.Contains(out, "REPLY-TO "+root["id"].(string)) || !strings.Contains(out, "untagged follow-up") {
 		t.Fatalf("watcher missed an untagged reply in alice's thread:\n%s", out)
 	}
+	// the ack nudge names the message that tagged you, never the thread root:
+	// a 👀 on the root would land on the wrong message (task 30)
+	if !strings.Contains(out, "| ack: ac react ") || strings.Contains(out, "| ack: ac react "+root["id"].(string)) {
+		t.Fatalf("REPLY-TO line lacks the ack nudge, or points it at the root:\n%s", out)
+	}
 	if strings.Contains(out, "plain top-level") {
 		t.Fatalf("watcher with WATCH=\"\" leaked a plain top-level message:\n%s", out)
 	}

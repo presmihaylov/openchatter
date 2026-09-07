@@ -68,7 +68,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   const pageFor = (e, chID) => e.pages.get(chID) || null;
   const setPage = (e, chID, list) => {
-    const page = { list: list.slice(-PAGE_LIMIT), openedAt: Date.now() };
+    const page = { list: list.slice(-PAGE_LIMIT), openedAt: Date.now(), replies: new Set() };
     e.pages.set(chID, page);
     return page;
   };
@@ -78,8 +78,27 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const t = ev.type;
     if (t === 'message.created') {
       const m = ev.payload;
-      const page = m.thread_root_id ? null : pageFor(e, m.channel_id);
+      const page = pageFor(e, m.channel_id);
       if (!page) return true;
+      // a reply never joins the channel page, but it moves its root's footer:
+      // leave the cached root stale and a later repaint from cache drops the
+      // "N replies" line the DOM patch had already put there
+      if (m.thread_root_id) {
+        const root = page.list.find((x) => x.id === m.thread_root_id);
+        if (!root) return true;
+        if (page.replies.has(m.id)) return false; // a replayed event must not count twice
+        // the fetch that filled this page already counted every reply up to the
+        // root's last_reply_at, and the feed cursors predate that fetch: without
+        // this the first replayed reply after a boot or a warm counts twice
+        if (root.last_reply_at && m.created_at <= root.last_reply_at) return false;
+        page.replies.add(m.id);
+        root.reply_count = (root.reply_count || 0) + 1;
+        root.last_reply_at = m.created_at;
+        if (!(root.replier_ids || []).includes(m.author_id)) {
+          root.replier_ids = (root.replier_ids || []).concat(m.author_id);
+        }
+        return true;
+      }
       if (page.list.some((x) => x.id === m.id)) return false;
       page.list.push(m);
       if (page.list.length > PAGE_LIMIT) page.list.splice(0, page.list.length - PAGE_LIMIT);
@@ -92,9 +111,16 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       return true;
     }
     if (t === 'message.deleted') {
+      const rootID = ev.payload.thread_root_id;
       for (const page of e.pages.values()) {
+        page.replies.delete(ev.payload.message_id);
         const i = page.list.findIndex((x) => x.id === ev.payload.message_id);
         if (i >= 0) page.list.splice(i, 1);
+        // a deleted reply is not on the page, but it still leaves its root's
+        // footer one too high; the exact last_reply_at only a refetch knows
+        const root = rootID ? page.list.find((x) => x.id === rootID) : null;
+        if (root && root.reply_count) root.reply_count -= 1;
+        if (root && !root.reply_count) root.last_reply_at = null;
       }
       return true;
     }
@@ -1707,8 +1733,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const out = await api(`/api/v1/channels/${ch.id}/messages?limit=100`, { ws: e.slug });
       const live = out.messages || [];
       const page = pageFor(e, ch.id);
+      // reply_count and last_reply_at are part of what a root paints: comparing
+      // ids and bodies alone calls a stale footer "same" and skips the repaint
       const same = page && page.list.length === live.length
-        && page.list.every((m, i) => m.id === live[i].id && m.body === live[i].body);
+        && page.list.every((m, i) => m.id === live[i].id && m.body === live[i].body
+          && (m.reply_count || 0) === (live[i].reply_count || 0)
+          && (m.last_reply_at || '') === (live[i].last_reply_at || ''));
       const fresh = setPage(e, ch.id, live);
       if (same || e !== active() || !current || current.id !== ch.id) return;
       renderMessages(fresh.list, ch);
@@ -2107,6 +2137,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const id = ev.payload.message_id;
       msgNode(id)?.remove();
       syncDateDividers($('messages'));
+      // a deleted reply moves its root's footer down, same as a new one moves it up
+      if (ev.payload.thread_root_id) await refreshRootBar(ev.payload.thread_root_id);
       if (openThreadRoot === id) closeThread();
       else if (openThreadRoot) {
         try { await openThread(openThreadRoot); } // a reply was deleted

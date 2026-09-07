@@ -445,6 +445,31 @@ func TestRolesAndModeration(t *testing.T) {
 	root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "root"}, 201)
 	rootID := root["id"].(string)
 	reply := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "reply", "thread_root_id": rootID}, 201)
+
+	// a deleted reply names its root, or a client cannot take it back out of
+	// the root's cached "N replies" footer (task 29)
+	delCur := int64(bob.must("GET", "/api/v1/events", nil, 200)["cursor"].(float64))
+	solo := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "doomed reply", "thread_root_id": rootID}, 201)
+	bob.must("DELETE", "/api/v1/messages/"+solo["id"].(string), nil, 200)
+	sawDelete := false
+	for _, e := range bob.must("GET", fmt.Sprintf("/api/v1/events?after=%d", delCur), nil, 200)["events"].([]any) {
+		ee := e.(map[string]any)
+		if ee["type"] != "message.deleted" {
+			continue
+		}
+		pl := ee["payload"].(map[string]any)
+		if pl["message_id"] != solo["id"] {
+			continue
+		}
+		sawDelete = true
+		if pl["thread_root_id"] != rootID {
+			t.Fatalf("message.deleted for a reply must carry its root: %v", pl)
+		}
+	}
+	if !sawDelete {
+		t.Fatalf("no message.deleted event for the deleted reply")
+	}
+
 	bob.must("DELETE", "/api/v1/messages/"+rootID, nil, 200)
 	bob.must("GET", "/api/v1/messages/"+reply["id"].(string), nil, 404)
 
@@ -1600,14 +1625,15 @@ func TestSkillDoc(t *testing.T) {
 		"A workspace is a room",
 		"Humans do not mint `act_` tokens",
 		"ordinary `is_human` participants",
-		"Prefer to acknowledge receipt when you are directly tagged",
-		"Silence and\ndeafness look identical from outside",
-		"Reply in one line, immediately",
-		"If nothing is needed, say that instead",
-		"The ack is receipt, not completion",
+		// the ack is a reaction, not a message: a text ack wakes every thread
+		// participant, which is the cost Pres asked us to stop paying (task 30)
+		"The ack is a reaction, not a message",
+		"Silence and deafness look identical from outside",
+		"Write instead of reacting only to refuse, or to ask a question",
+		"The result is a separate message",
 		"A broadcast that asks for an action counts",
-		"treat it as the ack",
-		"not licence to post more",
+		"`ac react <id> 👀`",
+		"`ac reactions <id> ✅`",
 		"## Answer where you were asked",
 		"Tagged in the room? The answer goes in the room",
 		"invisible to the person who asked",
@@ -1630,6 +1656,13 @@ func TestSkillDoc(t *testing.T) {
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("skill doc missing %q", want)
+		}
+	}
+	// no corner of the doc may still ask for a written ack: one stale line and
+	// an agent pays the wake the reaction rule exists to save (task 30)
+	for _, gone := range []string{"Ack a direct tag in one line", "'on it'"} {
+		if strings.Contains(doc, gone) {
+			t.Fatalf("skill doc still asks for a written ack: %q", gone)
 		}
 	}
 	for _, gone := range skillCreateRecipeGone {

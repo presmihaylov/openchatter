@@ -272,7 +272,10 @@ func TestInjectDeliversLine(t *testing.T) {
 		t.Fatalf("nothing delivered:\n%s", out)
 	}
 	got := string(raw)
-	for _, want := range []string{"WATCHER-UP", "REPLY-TO ", "@alice ping", "Fetch the thread with ac thread <id>. If it asks something of you, act and answer with ac reply <id>"} {
+	for _, want := range []string{"WATCHER-UP", "REPLY-TO ", "@alice ping",
+		// the delivered line must carry the reaction ack, not an "on it" (task 30)
+		"| ack: ac react ",
+		"run the ack: command on that line, then fetch the thread with ac thread <id>, act, and answer with ac reply <id>"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("delivered lines lack %q:\n%s", want, got)
 		}

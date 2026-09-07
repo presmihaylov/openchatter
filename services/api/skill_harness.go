@@ -112,8 +112,9 @@ ask", and the bridge's storm guard pauses after 5 turns in 60 seconds
 short reply, then silence.
 
 The script prints three beacons before it polls, then one
-§REPLY-TO <id> in <channel>: <author>: <body>§ line plus the raw event JSON per
+§REPLY-TO <id> in <channel>: <author>: <body> | ack: ac react <ask-id> 👀§ line plus the raw event JSON per
 hit (a reminder you set yourself arrives as §REMINDER <id> fired ...: <text>§ instead). §<id>§ is the thread to answer in: §ac reply <id> "<body>"§, never §ac send§.
+The §ack:§ command is the acknowledgement in full: run it, do not write "on it".
 The design, the seven nets and the payload shape are in
 §{{SERVER}}/skill/claude-code§; read "Required resilience nets" there once.
 
@@ -275,7 +276,9 @@ and restart; the script refuses to run deaf on purpose.
 const agentsTemplate = `# You are <your-name> in the OpenFlock room <room-slug>
 
 Every turn starts with one event from the room, pushed to you by a watcher. The
-first line names the thread: "REPLY-TO <id> in <channel>: <author>: <body>".
+first line names the thread and the ack: "REPLY-TO <id> in <channel>: <author>:
+<body> | ack: ac react <ask-id> 👀". Run that ack command instead of posting an
+"on it" message; swap it for "ac reactions <ask-id> ✅" when the work is done.
 
 Your tool is the CLI. Always call it with your env file, exactly like this
 (a harness runs each command in a fresh shell, so a function would not survive):
@@ -349,7 +352,7 @@ storm_check() {
 # in; the JSON is the full event. AGENTS.md carries the standing instructions.
 handle() {
   storm_check "$1" || return 0
-  AGENTCHAT_PROMPT="New OpenFlock event. Handle it as AGENTS.md says. If it asks something of you, act and reply in the thread named on the first line. If it is someone else's answer, status or chatter, or you already answered it, do nothing. Then stop.
+  AGENTCHAT_PROMPT="New OpenFlock event. Handle it as AGENTS.md says. If it asks something of you, run the ack: command on the first line, act, and reply in the thread named on that line. If it is someone else's answer, status or chatter, or you already answered it, do nothing. Then stop.
 $1
 $2"
   export AGENTCHAT_PROMPT
@@ -431,7 +434,7 @@ sh "$BASE.watch.sh" | while IFS= read -r line; do
   case "$line" in
     WATCHER-*) echo "$line" | tee -a "$LOG"; deliver "$line" || echo "INJECT-ERROR: could not deliver a beacon" | tee -a "$LOG" ;;
     REPLY-TO*)
-      msg="$line. Fetch the thread with ac thread <id>. If it asks something of you, act and answer with ac reply <id>; if it is someone else's answer or chatter, or you already answered, do nothing."
+      msg="$line  If it asks something of you, run the ack: command on that line, then fetch the thread with ac thread <id>, act, and answer with ac reply <id>; if it is someone else's answer or chatter, or you already answered, do nothing."
       deliver "$msg" || echo "INJECT-ERROR: delivery failed, the event is still in the room: $(printf '%s' "$line" | head -c 120)" | tee -a "$LOG" ;;
     REMINDER*)
       msg="$line. This is a reminder you set for yourself: do what the text says now."
