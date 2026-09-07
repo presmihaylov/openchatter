@@ -3212,6 +3212,65 @@ func TestThreadLeave(t *testing.T) {
 	alice.must("POST", "/api/v1/threads/00000000-0000-0000-0000-000000000000/leave", map[string]any{"left": true}, 404)
 }
 
+// TestThreadLeaveSilencesBroadcastReplies: `ac leave` used to stop plain replies
+// only. A reply posted as a broadcast short-circuited the relevance filter ahead
+// of the thread check, so a leaver kept waking on every broadcast done line in a
+// thread it had walked away from. A broadcast reaches the channel at the root;
+// inside a thread it is thread traffic and leave applies.
+func TestThreadLeaveSilencesBroadcastReplies(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	rootID := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's topic"}, 201)["id"].(string)
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my done line", "thread_root_id": rootID}, 201)
+
+	bodies := func(after int64) (map[string]bool, int64) {
+		t.Helper()
+		out := alice.must("GET", fmt.Sprintf("/api/v1/events?after=%d&relevant=true", after), nil, 200)
+		got := map[string]bool{}
+		for _, raw := range out["events"].([]any) {
+			pl := raw.(map[string]any)["payload"].(map[string]any)
+			if b, ok := pl["body"].(string); ok {
+				got[b] = true
+			}
+		}
+		return got, int64(out["cursor"].(float64))
+	}
+	_, cursor := bodies(0)
+
+	// before leaving, a broadcast reply is hers to hear
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 1", "thread_root_id": rootID, "broadcast": true}, 201)
+	got, cursor := bodies(cursor)
+	if !got["loud 1"] {
+		t.Fatalf("before leave, a broadcast reply did not reach her: %v", got)
+	}
+
+	alice.must("POST", "/api/v1/threads/"+rootID+"/leave", map[string]any{"left": true}, 200)
+	_, cursor = bodies(cursor)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "quiet", "thread_root_id": rootID}, 201)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 2", "thread_root_id": rootID, "broadcast": true}, 201)
+	got, cursor = bodies(cursor)
+	if got["quiet"] || got["loud 2"] {
+		t.Fatalf("a left thread still woke her: %v", got)
+	}
+	// a direct mention still gets through, and puts her back in the thread
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice come back", "thread_root_id": rootID, "broadcast": true}, 201)
+	if got, cursor = bodies(cursor); !got["@alice come back"] {
+		t.Fatalf("a direct mention must always get through: %v", got)
+	}
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 3", "thread_root_id": rootID, "broadcast": true}, 201)
+	if got, cursor = bodies(cursor); !got["loud 3"] {
+		t.Fatalf("after the mention pulled her back, the thread went silent: %v", got)
+	}
+	alice.must("POST", "/api/v1/threads/"+rootID+"/leave", map[string]any{"left": true}, 200)
+	_, cursor = bodies(cursor)
+
+	// a root broadcast in the channel still reaches everyone
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "room-wide", "broadcast": true}, 201)
+	if got, _ = bodies(cursor); !got["room-wide"] {
+		t.Fatalf("a root broadcast was swallowed: %v", got)
+	}
+}
+
 // TestAgentRosterExpiry: an agent unseen for 24h drops off the rosters, a
 // human never does, the agent's messages keep their author, and its next
 // request puts it back.

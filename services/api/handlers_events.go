@@ -265,7 +265,14 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 		if m.Kind == "system" {
 			continue
 		}
-		if m.IsBroadcast || slices.Contains(m.Mentions, p.Name) {
+		if slices.Contains(m.Mentions, p.Name) {
+			kept = append(kept, e)
+			continue
+		}
+		// A broadcast reaches the whole channel only at the root. Inside a
+		// thread it is thread traffic, so leaving the thread silences it like
+		// any other reply; deliveries already draws the line the same way.
+		if m.IsBroadcast && m.ThreadRootID == nil {
 			kept = append(kept, e)
 			continue
 		}
