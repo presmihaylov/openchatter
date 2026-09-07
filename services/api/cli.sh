@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -195,10 +195,17 @@ load_config() {
   [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$OPENCHATTER_TOKEN"
   CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID:-$DEFAULT_CF_ACCESS_CLIENT_ID}"
   CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET:-$DEFAULT_CF_ACCESS_CLIENT_SECRET}"
-  # CF_ARGS is spliced into every curl; empty when the room is not behind Access
-  CF_ARGS=()
+  # Credentials go in a curl config file, never in argv: any process the same
+  # user runs can read another's command line out of ps. CFRC is spliced into
+  # every curl and carries the bearer token plus, behind Access, the two
+  # service-token headers.
+  CFRC=$(mktemp "${TMPDIR:-/tmp}/openchatter-curlrc.XXXXXX") || die "cannot create a credentials file"
+  chmod 600 "$CFRC"
+  trap 'rm -f "$CFRC"' EXIT INT TERM HUP
+  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$CFRC"
   if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
-    CF_ARGS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+    printf 'header = "CF-Access-Client-Id: %s"\nheader = "CF-Access-Client-Secret: %s"\n' \
+      "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" >> "$CFRC"
   fi
 }
 
@@ -223,7 +230,7 @@ CODE=""
 # request METHOD PATH [JSON-BODY]
 request() {
   local method="$1" path="$2" body="${3:-}" out
-  local args=(-sS -X "$method" -H "Authorization: Bearer $TOKEN" ${CF_ARGS[@]+"${CF_ARGS[@]}"} -w $'\n%{http_code}')
+  local args=(-sS -X "$method" -K "$CFRC" -w $'\n%{http_code}')
   if [ -n "$body" ]; then args+=(-H 'Content-Type: application/json' -d "$body"); fi
   out=$(curl "${args[@]}" "$SERVER$path") || die "cannot reach $SERVER"
   CODE="${out##*$'\n'}"
@@ -474,7 +481,7 @@ upload_attachments() {
     [ -z "$f" ] && continue
     [ -r "$f" ] || die "cannot read attachment: $f"
     local out code resp
-    out=$(curl -sS -X POST -H "Authorization: Bearer $TOKEN" ${CF_ARGS[@]+"${CF_ARGS[@]}"} -F "file=@$f" -w $'\n%{http_code}' "$SERVER/api/v1/attachments") \
+    out=$(curl -sS -X POST -K "$CFRC" -F "file=@$f" -w $'\n%{http_code}' "$SERVER/api/v1/attachments") \
       || die "cannot reach $SERVER"
     code="${out##*$'\n'}"; resp="${out%$'\n'*}"
     [ "${code:0:1}" = "2" ] || die "upload of $f failed (HTTP $code): $(json_str "$resp" 'd.get("error","")')"
@@ -845,7 +852,7 @@ cmd_download() {
   mkdir -p "$OUT"
   while read -r id name; do
     [ -z "$id" ] && continue
-    curl -fsS -H "Authorization: Bearer $TOKEN" ${CF_ARGS[@]+"${CF_ARGS[@]}"} "$SERVER/api/v1/attachments/$id" -o "$OUT/$name" \
+    curl -fsS -K "$CFRC" "$SERVER/api/v1/attachments/$id" -o "$OUT/$name" \
       || die "download of $name failed"
     printf '%s\n' "$OUT/$name"
   done <<< "$list"

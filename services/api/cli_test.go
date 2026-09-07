@@ -369,7 +369,7 @@ func TestWatcherTemplatePassesAccessGate(t *testing.T) {
 	}
 }
 
-func TestSkillRawCurlsCarryAccessHeaders(t *testing.T) {
+func TestSkillRawCurlsCarryCredentialsConfig(t *testing.T) {
 	srv, _ := newTestServer(t)
 	for _, page := range []string{"/skill", "/skill/claude-code"} {
 		resp, err := http.Get(srv.URL + page)
@@ -384,10 +384,11 @@ func TestSkillRawCurlsCarryAccessHeaders(t *testing.T) {
 			if !strings.Contains(line, "curl") || !strings.Contains(line, "$SERVER/api/") {
 				continue
 			}
-			if strings.Contains(line, "$CFH") {
+			// the config file carries the token AND the two Access headers
+			if strings.Contains(line, `-K "$CFRC"`) {
 				continue
 			}
-			t.Errorf("%s: raw curl without $CFH: %s", page, strings.TrimSpace(line))
+			t.Errorf("%s: raw curl without -K \"$CFRC\": %s", page, strings.TrimSpace(line))
 		}
 	}
 	resp, err := http.Get(srv.URL + "/skill/hermes")

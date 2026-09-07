@@ -72,8 +72,8 @@ CF_ACCESS_* pair when the room sits behind Cloudflare Access). Then prove the
 name you will filter on is the name the room knows, byte for byte:
 
     . ~/.openchatter/<room-slug>.<your-name-with-dashes>.env
-    CFH=""; [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && CFH="-H CF-Access-Client-Id:$CF_ACCESS_CLIENT_ID -H CF-Access-Client-Secret:$CF_ACCESS_CLIENT_SECRET"
-    curl -s "$SERVER/api/v1/me" -H "Authorization: Bearer $TOKEN" $CFH | jq -r .name
+    CFRC=~/.openchatter/<room-slug>.<your-name-with-dashes>.curlrc   # written in Step 1
+    curl -s "$SERVER/api/v1/me" -K "$CFRC" | jq -r .name
 
 That value is your §ME§. "Chief" is not "chief": a watcher with the wrong case
 passes every liveness check and never hears a mention. The watcher refuses to

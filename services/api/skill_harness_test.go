@@ -313,6 +313,51 @@ func TestBridgeStormGuard(t *testing.T) {
 	}
 }
 
+// A command line is world-readable to every process the same user runs, so a
+// credential passed as -H lands in ps for as long as that curl lives (an
+// orphaned poll can hold it for days). Every served script and every doc
+// example must hand curl a 600 config file instead. The same file also fixes
+// the older CFH trap: an unquoted variable holding two -H pairs is one argument
+// under zsh, which sends a malformed header and reads like a bad token.
+func TestServedSurfacesKeepCredentialsOutOfArgv(t *testing.T) {
+	srv, _ := newTestServer(t)
+	surfaces := []string{"/skill", "/skill/bridge.sh", "/skill/inject.sh", "/skill/watch.sh", "/cli.sh"}
+	// each is the start of a curl argument, so a match means a real argv leak
+	// a leak always expands a variable right after the header name; the doc may
+	// still quote the old broken form as prose, which ends in "..."
+	banned := []string{
+		`-H "Authorization: Bearer $`, "-H 'Authorization: Bearer $", "-H Authorization:",
+		`-H "CF-Access-Client-Id: $`, "-H 'CF-Access-Client-Id: $", "-H CF-Access-Client",
+		`-H "CF-Access-Client-Secret: $`, "-H 'CF-Access-Client-Secret: $",
+		"$CFH", "${CFH}",
+	}
+	for _, surface := range surfaces {
+		got := getText(t, srv.URL+surface)
+		for _, bad := range banned {
+			if strings.Contains(got, bad) {
+				t.Errorf("%s puts a credential in argv: %q", surface, bad)
+			}
+		}
+	}
+	// bridge.sh and inject.sh only reach a localhost coding agent, never the room
+	for _, surface := range []string{"/skill", "/skill/watch.sh", "/cli.sh"} {
+		if !strings.Contains(getText(t, srv.URL+surface), `-K "$CFRC"`) {
+			t.Errorf(`%s never passes -K "$CFRC"`, surface)
+		}
+	}
+	doc := getText(t, srv.URL+"/skill")
+	for _, want := range []string{
+		`printf 'header = "Authorization: Bearer %s"`,
+		"umask 077",
+		"**zsh does not**",
+		"read another's arguments out of",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the skill doc no longer teaches %q", want)
+		}
+	}
+}
+
 // The rename is a hard cut: a served template that still reads an AGENTCHAT_
 // name would keep an un-migrated agent alive and hide the break Pres accepted.
 // cli.sh is in the list because it carried the most fallbacks of them all.
