@@ -56,6 +56,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         channels: [], groups: [], ungrouped: [], defaultCollapsed: false,
         participants: [], publicChannels: [], threads: [],
         pages: new Map(), members: new Map(), lastChannelID: null, refreshTimer: 0,
+        roomLoadSeq: 0, groupLoadSeq: 0, publicLoadSeq: 0,
         threadLoadSeq: 0, pending: [] };
       store.set(s, e);
     }
@@ -1212,13 +1213,19 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
 
   const fetchGroups = async (e = active()) => {
+    const seq = ++e.groupLoadSeq;
     try {
       const layout = await api('/api/v1/channel-groups', { ws: e.slug });
+      if (seq !== e.groupLoadSeq) return false;
       e.groups = layout.groups || [];
       e.ungrouped = layout.ungrouped || [];
       e.defaultCollapsed = !!layout.default_collapsed;
-    } catch (err) { e.groups = []; e.ungrouped = []; e.defaultCollapsed = false; }
+    } catch (err) {
+      if (seq !== e.groupLoadSeq) return false;
+      e.groups = []; e.ungrouped = []; e.defaultCollapsed = false;
+    }
     if (e === active()) { groups = e.groups; ungrouped = e.ungrouped; defaultCollapsed = e.defaultCollapsed; }
+    return true;
   };
 
   // Collapse/expand is optimistic: flip locally and re-render, then persist.
@@ -1669,22 +1676,45 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // links and leaks nothing.
   let publicChannels = [];
   const fetchPublicChannels = async (e = active()) => {
+    const seq = ++e.publicLoadSeq;
     try {
-      e.publicChannels = ((await api('/api/v1/channels/browse', { ws: e.slug })).channels || []).filter((c) => !c.member);
-    } catch { e.publicChannels = []; }
+      const out = await api('/api/v1/channels/browse', { ws: e.slug });
+      if (seq !== e.publicLoadSeq) return false;
+      e.publicChannels = (out.channels || []).filter((c) => !c.member);
+    } catch {
+      if (seq !== e.publicLoadSeq) return false;
+      e.publicChannels = [];
+    }
     if (e === active()) publicChannels = e.publicChannels;
+    return true;
   };
   const linkableChannels = () => channels.filter((c) => !c.archived).concat(publicChannels);
 
   // the workspace, its sidebar sections and browse list, into the entry; no DOM
   const loadRoomInto = async (e) => {
-    const out = await api('/api/v1/room', { ws: e.slug });
+    const seq = ++e.roomLoadSeq;
+    const groupSeq = ++e.groupLoadSeq;
+    const publicSeq = ++e.publicLoadSeq;
+    const [out, layout, browse] = await Promise.all([
+      api('/api/v1/room', { ws: e.slug }),
+      api('/api/v1/channel-groups', { ws: e.slug }).catch(() => null),
+      api('/api/v1/channels/browse', { ws: e.slug }).catch(() => null),
+    ]);
+    // A refresh is one snapshot. Once a newer one starts, none of this one's
+    // room/sidebar fields may commit, even if its HTTP response arrives last.
+    if (seq !== e.roomLoadSeq) return false;
     e.room = out.room;
     e.joinURL = out.join_url;
     e.isAdmin = !!out.admin;
     e.channels = out.channels || [];
     e.participants = out.participants || [];
-    await Promise.all([fetchGroups(e), fetchPublicChannels(e)]);
+    if (groupSeq === e.groupLoadSeq) {
+      e.groups = layout?.groups || [];
+      e.ungrouped = layout?.ungrouped || [];
+      e.defaultCollapsed = !!layout?.default_collapsed;
+    }
+    if (publicSeq === e.publicLoadSeq) e.publicChannels = (browse?.channels || []).filter((c) => !c.member);
+    return true;
   };
   // every region of the workspace pane from the active entry, in one pass
   const paintRoom = () => {
@@ -1698,7 +1728,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   const refreshRoom = async () => {
     const e = active();
-    await loadRoomInto(e);
+    if (!await loadRoomInto(e)) return;
     if (e !== active()) return; // switched away meanwhile
     adopt(e);
     paintRoom();
@@ -2451,7 +2481,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     clearTimeout(e.refreshTimer);
     e.refreshTimer = setTimeout(async () => {
       try {
-        await loadRoomInto(e);
+        if (!await loadRoomInto(e)) return;
         if (e === active()) { adopt(e); paintRoom(); }
         paintRailBadges();
       } catch (err) {

@@ -41,6 +41,7 @@ node scripts/pendingnav-check.js              # PENDINGNAV_CHECK_OK (optimistic 
 node scripts/attachmentnav-check.js           # ATTACHMENTNAV_CHECK_OK (staged uploads stay bound to their composer and release previews)
 node scripts/inviterace-check.js               # INVITERACE_CHECK_OK (older invite responses cannot overwrite newer lists)
 node scripts/avatarurl-check.js                # AVATARURL_CHECK_OK (settings repaints revoke protected-image object URLs)
+node scripts/roomrace-check.js                  # ROOMRACE_CHECK_OK (older room/sidebar snapshots cannot overwrite newer state)
 node scripts/search-check.js                # SEARCH_CHECK_OK (hybrid list, avatar rows, semantic tag, degrade)
 node scripts/searchfilters-check.js         # SEARCHFILTERS_CHECK_OK (From/In/Date/Kind/Has, chips, inline tokens)
 node scripts/copy-check.js                  # COPY_CHECK_OK

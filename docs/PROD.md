@@ -129,6 +129,7 @@ Each row rolls back to the previous row's commit; find the commit with
 | staged attachment navigation cleanup (no migration) | 43 | 43 | nothing; redeploy `cdf4c36` to restore cross-navigation staged uploads and unreleased previews |
 | invite list response ownership (no migration) | 43 | 43 | nothing; redeploy `862ec0a` to restore last-response-wins invite rendering |
 | personal avatar URL lifecycle (no migration) | 43 | 43 | nothing; redeploy `ce3ffbb` to restore unbounded settings-avatar object URLs |
+| room/sidebar response ownership (no migration) | 43 | 43 | nothing; redeploy `74fd117` to restore last-response-wins room refreshes |
 
 Task 08 shipped on 2026-09-04 (Maya's call, ahead of the planned 7-day wait). Rolling
 back past `000027` (`-migrate-to 26` or lower) does not restore human tokens: the down
