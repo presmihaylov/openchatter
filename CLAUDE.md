@@ -43,6 +43,7 @@ node scripts/inviterace-check.js               # INVITERACE_CHECK_OK (older invi
 node scripts/avatarurl-check.js                # AVATARURL_CHECK_OK (settings repaints revoke protected-image object URLs)
 node scripts/roomrace-check.js                  # ROOMRACE_CHECK_OK (older room/sidebar snapshots cannot overwrite newer state)
 node scripts/presenceperf-check.js              # PRESENCEPERF_CHECK_OK (presence updates all open views without structural refetches)
+node scripts/sendresponse-check.js              # SENDRESPONSE_CHECK_OK (successful POST settles even when the live feed is down)
 node scripts/search-check.js                # SEARCH_CHECK_OK (hybrid list, avatar rows, semantic tag, degrade)
 node scripts/searchfilters-check.js         # SEARCHFILTERS_CHECK_OK (From/In/Date/Kind/Has, chips, inline tokens)
 node scripts/copy-check.js                  # COPY_CHECK_OK

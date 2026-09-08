@@ -2129,6 +2129,26 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     pendingSends.splice(i, 1);
   };
 
+  // The event feed is normally first, but the successful POST is also an
+  // authoritative message. If the feed is reconnecting, settle from this
+  // response instead of retaining a pending row and record indefinitely.
+  const settleSendResponse = (m, rec) => {
+    const i = pendingSends.indexOf(rec);
+    if (i < 0) return; // its live event already won
+    pendingSends.splice(i, 1);
+    const e = store.get(rec.workspace);
+    if (e) pageApply(e, { type: 'message.created', payload: m });
+    const box = rec.node.parentElement;
+    if (box) {
+      rec.node.replaceWith(msgEl(m, !!rec.rootID));
+      syncDateDividers(box);
+    }
+    if (rec.rootID && e) {
+      loadThreads(e);
+      if (e === active() && current && current.id === rec.channelID) refreshRootBar(rec.rootID);
+    }
+  };
+
   const post = async (body, threadRootID) => {
     const rootID = threadRootID || null;
     const which = threadRootID ? 'thread' : 'main';
@@ -2155,6 +2175,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
 
     try {
       const sent = await api(`/api/v1/channels/${channelID}/messages`, { method: 'POST', body: payload, ws: workspace });
+      settleSendResponse(sent, rec);
       // mentioning somebody outside the channel silently reaches nobody
       if (sent && sent.warnings && sent.warnings.length) notice(sent.warnings[0], true);
     } catch (e) {
