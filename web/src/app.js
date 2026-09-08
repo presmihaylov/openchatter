@@ -1323,9 +1323,11 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // the top-level offline section's reveal state.
   // in-memory only — collapses back on reload by design.
   let offlineOpen = false;
+  let profileFor = null;
   let profileDeliveryFor = null;
 
   const showProfile = (p) => {
+    profileFor = p;
     const slot = $('profile-avatar');
     slot.innerHTML = '';
     slot.appendChild(avatarEl(p, 'avatar-lg'));
@@ -2310,6 +2312,31 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
 
   // the notification, archive and theme controls live on /settings (auth.js);
   // notifyPrefs is loaded once at boot and read by the feed
+  const applyPresenceEvent = (e, payload, paint) => {
+    const update = (p) => {
+      if (!p || p.id !== payload.participant_id) return false;
+      p.online = !!payload.online;
+      if (p.online) p.last_seen_at = new Date().toISOString();
+      return true;
+    };
+    e.participants.forEach(update);
+    for (const list of e.members.values()) list.forEach(update);
+    const mine = update(e.me);
+    if (!paint || e !== active()) return;
+    if (mine) renderMeFooter();
+    renderParticipants();
+    if (current && e.members.has(current.id)) {
+      paintHeaderMembers(current);
+      if (!$('members-modal').classList.contains('hidden')) renderMembersModal();
+    }
+    if (profileFor && profileFor.id === payload.participant_id) {
+      profileFor.online = !!payload.online;
+      $('profile-meta').textContent =
+        `${profileFor.role}${profileFor.is_human ? ' · human' : ' · agent'} · ${profileFor.online ? 'online' : 'offline'}`;
+      const capTitle = $('profile-caps').querySelector('h4');
+      if (capTitle) capTitle.textContent = 'Capabilities' + (profileFor.online ? '' : ' · not callable: offline');
+    }
+  };
   const applyEvent = async (ev) => {
     const t = ev.type;
     if (t === 'message.created') settleMine(ev.payload, slug);
@@ -2394,6 +2421,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       if (profileCapsFor && ev.payload.participant_id === profileCapsFor.id) showCapabilities(profileCapsFor);
       return;
     }
+    // The event is the complete presence delta. Re-fetching the room, channel
+    // sections, Browse and channel roster for one dot caused four requests per
+    // transition and amplified agent sleep/wake bursts across every open tab.
+    if (t === 'participant.presence_changed') {
+      applyPresenceEvent(active(), ev.payload, true);
+      return;
+    }
     // everything else changes room structure or people — refresh the sidebar
     await refreshRoom();
     // an open Browse list is a snapshot: a channel created or joined elsewhere
@@ -2401,7 +2435,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (t.startsWith('channel.') && !$('browse-modal').classList.contains('hidden')) {
       await openBrowse();
     }
-    if ((t === 'channel.member_joined' || t === 'channel.member_left' || t === 'participant.presence_changed') && current) {
+    if ((t === 'channel.member_joined' || t === 'channel.member_left') && current) {
       refreshHeaderMembers(current); // keeps the header count, dots, and open modal live
     }
     // my own removal: the channel is gone from my sidebar; leave it if I'm inside
@@ -2474,6 +2508,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       return;
     }
     if (t === 'capability.call' || t === 'capability.result' || t === 'capability.registered' || t === 'reminder.fired') return;
+    if (t === 'participant.presence_changed') {
+      applyPresenceEvent(e, ev.payload, false);
+      return;
+    }
     if (t === 'room.renamed') refreshRail(); // the rail tip carries the name
     scheduleRoomRefresh(e); // people or structure changed: one refetch per burst
   };
@@ -3766,6 +3804,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   });
 
   const closeProfile = () => {
+    profileFor = null;
     profileCapsFor = null;
     profileRemindersFor = null;
     profileDeliveryFor = null;
