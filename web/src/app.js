@@ -167,16 +167,24 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // endpoint but never the slot: a file staged in one composer must not ride
   // out on the other's send.
   const pendingAtt = { main: null, thread: null };
-  const clearThreadAttachment = () => {
-    pendingAtt.thread = null;
-    const pend = $('thread-attach-pending');
-    if (pend) { pend.innerHTML = ''; pend.classList.add('hidden'); }
-    const input = $('thread-attach-input');
-    if (input) input.value = '';
-  };
+  const pendingAttSeq = { main: 0, thread: 0 };
+  const pendingPreviewURL = { main: null, thread: null };
   const attachEls = (which) => (which === 'thread'
     ? { pend: $('thread-attach-pending'), input: $('thread-attach-input') }
     : { pend: $('attach-pending'), input: $('attach-input') });
+  const clearPendingAttachment = (which) => {
+    pendingAttSeq[which]++;
+    pendingAtt[which] = null;
+    if (pendingPreviewURL[which]) {
+      URL.revokeObjectURL(pendingPreviewURL[which]);
+      pendingPreviewURL[which] = null;
+    }
+    const { pend, input } = attachEls(which);
+    if (pend) { pend.replaceChildren(); pend.classList.add('hidden'); }
+    if (input) input.value = '';
+  };
+  const clearThreadAttachment = () => clearPendingAttachment('thread');
+  const clearMainAttachment = () => clearPendingAttachment('main');
 
   // One header builder for every fetch. The login session is the only browser
   // identity; it names its workspace through X-Workspace-Slug on room pages.
@@ -1777,7 +1785,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     // close without a push; the channel-change push below covers this transition
     if (current && ch.id !== current.id) closeThread(false);
     const changed = !current || current.id !== ch.id;
-    if (changed) talkedAt = new Map();
+    if (changed) {
+      clearMainAttachment(); // a staged file belongs to the channel where it was chosen
+      talkedAt = new Map();
+    }
     current = ch;
     syncURL(changed && !fromURL); // refreshes replace, real navigation pushes
     setChannelTitle(ch);
@@ -2108,7 +2119,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     } else if (rootID && rootID === openThreadRoot) {
       const box = $('thread-messages'); box.appendChild(node); syncDateDividers(box); box.scrollTop = box.scrollHeight;
     }
-    if (att) { pendingAtt[which] = null; attachEls(which).pend.classList.add('hidden'); }
+    if (att) clearPendingAttachment(which);
 
     try {
       const sent = await api(`/api/v1/channels/${channelID}/messages`, { method: 'POST', body: payload, ws: workspace });
@@ -2631,6 +2642,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // the old workspace survives it and nothing of the new one precedes it
   const swapTo = (e, chName, push) => {
     closeThread(false);
+    clearMainAttachment();
     closeMembers(); closeBrowse(); closeSearch(); closeInviteModal(); closeAddAgent();
     slug = e.slug;
     roomPrefix = '/w/';
@@ -4021,11 +4033,14 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
 
   const showPendingAttachment = (which, file) => {
     const pend = attachEls(which).pend;
-    pend.innerHTML = '';
+    if (pendingPreviewURL[which]) URL.revokeObjectURL(pendingPreviewURL[which]);
+    pendingPreviewURL[which] = null;
+    pend.replaceChildren();
     if (file.type.startsWith('image/')) {
       const im = document.createElement('img');
       im.className = 'pending-thumb';
-      im.src = URL.createObjectURL(file);
+      pendingPreviewURL[which] = URL.createObjectURL(file);
+      im.src = pendingPreviewURL[which];
       pend.appendChild(im);
     }
     pend.insertAdjacentHTML('beforeend', ICON.paperclip + ' ');
@@ -4034,18 +4049,27 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     clear.type = 'button';
     clear.className = 'pending-clear';
     clear.innerHTML = ICON.x;
-    clear.onclick = () => { pendingAtt[which] = null; pend.classList.add('hidden'); };
+    clear.onclick = () => clearPendingAttachment(which);
     pend.appendChild(clear);
     pend.classList.remove('hidden');
   };
 
   const uploadPending = async (which, file) => {
+    clearPendingAttachment(which);
+    const seq = pendingAttSeq[which];
+    const workspace = slug;
+    const channelID = current?.id || null;
+    const threadRootID = which === 'thread' ? openThreadRoot : null;
+    const stillHere = () => pendingAttSeq[which] === seq && slug === workspace
+      && current?.id === channelID && (which === 'main' || openThreadRoot === threadRootID);
     const fd = new FormData();
     fd.append('file', file);
     try {
-      pendingAtt[which] = await api('/api/v1/attachments', { method: 'POST', body: fd });
+      const uploaded = await api('/api/v1/attachments', { method: 'POST', body: fd, ws: workspace });
+      if (!stillHere()) return;
+      pendingAtt[which] = uploaded;
       showPendingAttachment(which, file);
-    } catch (e) { alert(e.message); }
+    } catch (e) { if (stillHere()) alert(e.message); }
   };
 
   for (const which of ['main', 'thread']) {

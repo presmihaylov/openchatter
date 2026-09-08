@@ -38,6 +38,7 @@ node scripts/channelnav-check.js            # CHANNELNAV_CHECK_OK (stale page/th
 node scripts/coldchannel-check.js            # COLDCHANNEL_CHECK_OK (first-load isolation and live-event reconciliation)
 node scripts/uistaterace-check.js            # UISTATERACE_CHECK_OK (profile/member requests stay bound to their view)
 node scripts/pendingnav-check.js              # PENDINGNAV_CHECK_OK (optimistic sends settle across navigation)
+node scripts/attachmentnav-check.js           # ATTACHMENTNAV_CHECK_OK (staged uploads stay bound to their composer and release previews)
 node scripts/search-check.js                # SEARCH_CHECK_OK (hybrid list, avatar rows, semantic tag, degrade)
 node scripts/searchfilters-check.js         # SEARCHFILTERS_CHECK_OK (From/In/Date/Kind/Has, chips, inline tokens)
 node scripts/copy-check.js                  # COPY_CHECK_OK
