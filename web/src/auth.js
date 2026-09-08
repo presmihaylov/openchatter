@@ -1,6 +1,7 @@
 import { ICON } from './icons.js';
 import { wsAvatarEl } from './wsavatar.js';
 import { isFleetRoom } from './fleet.js';
+import { avatarImage } from './avatar.js';
 /* Account pages (/login, /register, /settings) and the password banner.
    /settings is the one settings place: a Workspace tab and a Personal tab.
    The session token is a human's only browser identity; agents keep act_ tokens. */
@@ -653,21 +654,16 @@ const personalWorkspaceBits = async (slug, roomName) => {
   try { me = await wsApi(slug, '/api/v1/me'); } catch (e) { return; }
   $('avatar-section').classList.remove('hidden');
   $('avatar-ws-name').textContent = roomName;
-  const paintAvatar = async () => {
+  const paintAvatar = () => {
     const slot = $('settings-avatar');
     slot.innerHTML = '';
     $('avatar-remove').classList.toggle('hidden', !me.avatar_attachment_id);
-    // the seedling stands here until an upload lands, and again after Remove
-    const img = document.createElement('img');
-    img.className = 'avatar-lg avatar-img';
-    img.alt = me.name;
-    img.src = '/brand/avatar-default-512.png';
-    slot.appendChild(img);
-    if (!me.avatar_attachment_id) return;
-    try {
-      const resp = await fetch('/api/v1/attachments/' + me.avatar_attachment_id + '?size=512', { headers: { 'Authorization': 'Bearer ' + sessionToken(), 'X-Workspace-Slug': slug } });
-      if (resp.ok) img.src = URL.createObjectURL(await resp.blob());
-    } catch (e) { /* the alt text stands */ }
+    const source = me.avatar_attachment_id
+      ? fetch('/api/v1/attachments/' + me.avatar_attachment_id + '?size=512', { headers: { 'Authorization': 'Bearer ' + sessionToken(), 'X-Workspace-Slug': slug } })
+        .then((resp) => (resp.ok ? resp.blob() : Promise.reject(new Error('image fetch failed'))))
+        .then((blob) => URL.createObjectURL(blob))
+      : '/brand/avatar-default-512.png';
+    slot.appendChild(avatarImage('avatar-lg', me.name, source));
   };
   await paintAvatar();
   $('avatar-input').addEventListener('change', async () => {

@@ -1,5 +1,6 @@
 import { ICON } from './icons.js';
 import { wsAvatarEl } from './wsavatar.js';
+import { avatarImage } from './avatar.js';
 /* OpenChatter human web client — vanilla JS, talks to the same REST API as agents. */
 import { createComposer } from './composer.js';
 import { emojify, searchEmoji, rememberEmoji, shortcodeOf } from './emoji.js';
@@ -391,32 +392,27 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (!blobURLs[key]) {
       blobURLs[key] = fetch('/api/v1/attachments/' + attID + (size ? '?size=' + size : ''), { headers: authHeaders() })
         .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('image fetch failed'))))
-        .then((b) => URL.createObjectURL(b))
+        .then((b) => {
+          const url = URL.createObjectURL(b);
+          blobURLs[key] = url;
+          return url;
+        })
         .catch(() => { delete blobURLs[key]; return null; });
     }
     return blobURLs[key];
   };
-  const loadAvatarInto = (attID, img, size) => blobURL(attID, size).then((url) => { if (url) img.src = url; });
-  // An avatar is an image, always. A member who never uploaded one shows the
-  // shared seedling at the same two sizes, so nothing per-member is invented
-  // and no emoji ever stands in. The seedling is also the src while an
-  // uploaded image is still fetching, and what stays if that fetch fails.
+  // An avatar is an image, always. A member who never uploaded one uses the
+  // shared seedling. An uploaded image starts with no src at all: avatarImage
+  // owns its loading skeleton and neutral error state, so the seedling never
+  // flashes while a protected attachment is fetched.
   const DEFAULT_AVATAR = (size) => '/brand/avatar-default-' + size + '.png';
   const avatarCore = (p, cls) => {
-    // no participant row at all (deleted author): a chrome icon, not an avatar
-    if (!p) {
-      const span = document.createElement('span');
-      span.className = cls + ' avatar-emoji';
-      span.innerHTML = ICON.ghost;
-      return span;
-    }
+    if (!p) return avatarImage(cls, 'Deleted member', null);
     const size = cls === 'avatar-lg' ? 512 : 128;
-    const img = document.createElement('img');
-    img.className = cls + ' avatar-img';
-    img.alt = p.name;
-    img.src = DEFAULT_AVATAR(size);
-    if (p.avatar_attachment_id) loadAvatarInto(p.avatar_attachment_id, img, size);
-    return img;
+    const source = p.avatar_attachment_id
+      ? blobURL(p.avatar_attachment_id, size)
+      : DEFAULT_AVATAR(size);
+    return avatarImage(cls, p.name, source);
   };
   // Owner badge: overlay the human owner's avatar bottom-right, Slack-app-badge style.
   // Only for agents with a server-verified owner. Skipped on avatar-rb (reply-bar
@@ -3200,6 +3196,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const memberRow = (p, action) => {
     const row = document.createElement('div');
     row.className = 'mm-row';
+    row.dataset.id = p.id;
     row.appendChild(avatarEl(p, 'avatar-rb'));
     const name = document.createElement('span');
     name.className = 'mm-name';

@@ -370,11 +370,25 @@ body:not(.booting):has(> :not(#splash):not(#pw-banner):not(script):not(.hidden))
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 .msg .avatar { width: 31px; flex: none; }
 
-/* slack-style rounded avatar boxes: always an image (the seedling when the
-   member uploaded none); .avatar-emoji is left only for the ghost tile that
-   stands where a message has no participant row at all */
+/* Slack-style rounded avatar boxes. While an image request is in flight its
+   exact box becomes a circular, theme-native skeleton; genuine failures use
+   the same neutral circle without motion. */
 .avatar-img { object-fit: cover; display: block; }
-.avatar-emoji { display: flex; align-items: center; justify-content: center; background: none; }
+@keyframes avatar-skeleton-pulse {
+  0%, 100% { background-color: var(--panel2); }
+  50% { background-color: var(--border); }
+}
+.avatar-img.avatar-loading {
+  border-radius: 50% !important; background-color: var(--panel2); color: transparent;
+  animation: avatar-skeleton-pulse 1.1s ease-in-out infinite;
+}
+.avatar-img.avatar-error {
+  border-radius: 50% !important; background: var(--panel2); border: 1px solid var(--border);
+  color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-img.avatar-loading { animation: none; }
+}
 .avatar-msg { width: 28px; height: 28px; border-radius: 7px; font-size: 16px; flex: none; }
 /* message rows sit 10% larger than the same tile elsewhere (search hits);
    the column above matches so the text baseline does not shift */
@@ -384,12 +398,8 @@ body:not(.booting):has(> :not(#splash):not(#pw-banner):not(script):not(.hidden))
 /* owner badge: human owner's avatar overlaid bottom-right on an agent avatar.
    wrap carries the size class; core fills it; badge auto-scales via % units. */
 .avatar-wrap { position: relative; display: inline-flex; }
-.avatar-wrap > .avatar-img:not(.owner-badge-av),
-.avatar-wrap > .avatar-emoji:not(.owner-badge-av) {
+.avatar-wrap > .avatar-img:not(.owner-badge-av) {
   width: 100%; height: 100%; border-radius: inherit; font-size: inherit; }
-/* filled tile behind a badged emoji core so the corner badge overlaps a visible
-   edge, not the empty space around a centered glyph. */
-.avatar-wrap > .avatar-emoji:not(.owner-badge-av) { background: var(--panel2); }
 .owner-badge-av {
   position: absolute; right: 0; bottom: 0; width: 42%; height: 42%;
   border-radius: 28%; font-size: 42%; object-fit: cover; overflow: hidden;
@@ -858,8 +868,6 @@ button.danger:disabled { opacity: .45; cursor: not-allowed; }
    them move a little on hover. Reduced motion turns all of that off. */
 .lucide { transform-origin: 50% 50%; transition: transform .15s ease; }
 .mi-icon .lucide, .ws-caret .lucide, .os-icon .lucide, .t-icon .lucide, .mute-mark .lucide, .addagent-plus .lucide { display: block; }
-.avatar-emoji .lucide { width: 20px; height: 20px; color: var(--dim); }
-.avatar-lg .lucide { width: 24px; height: 24px; }
 .mention-name .lucide { margin-right: 4px; }
 .mention-name .avatar-img { display: inline-block; margin-right: 6px; vertical-align: -5px; }
 #app-signout .lucide, #settings-signout .lucide, .back-link .lucide, #settings-nav [role="tab"] .lucide { vertical-align: -3px; }

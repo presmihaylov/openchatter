@@ -44,6 +44,7 @@ node scripts/replycount-check.js            # REPLYCOUNT_CHECK_OK (root reply fo
 node scripts/list-check.js                  # LIST_CHECK_OK
 node scripts/attach-check.js                # ATTACH_CHECK_OK
 node scripts/avatar-check.js                # AVATAR_CHECK_OK (image-only avatars: uploaded, none, legacy emoji row, Remove)
+node scripts/avatarloading-check.js         # AVATARLOADING_CHECK_OK (slow image skeleton, real error, all surfaces, cache)
 node scripts/invite-check.js               # INVITE_CHECK_OK (ACCESS_ID/ACCESS_SECRET for a gated server)
 node scripts/invitemenu-check.js           # INVITEMENU_CHECK_OK
 node scripts/invitelink-check.js           # INVITELINK_CHECK_OK (/join/<token> page, revoke, expiry)
