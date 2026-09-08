@@ -38,6 +38,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   let channelMembers = [];
   let current = null;        // current channel object
   let openThreadRoot = null; // message id of the open thread
+  let openThreadSummary = null; // transient sidebar row for a deep-linked thread outside my tree
   let railRooms = [];        // the last /api/v1/user workspace list: badges, mutes, order
   let notifyPrefs = { enabled: true, sound: true, archive_after_secs: 3600 };
 
@@ -1068,6 +1069,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   $('rename-channel').onclick = () => { if (current) renameChannel(current); };
 
+  // The server's tree is intentionally personal (authored, replied, mentioned
+  // or subscribed). A deep link can still open any readable thread; keep that
+  // one represented in navigation while it is open without subscribing the
+  // viewer or changing which future replies notify them.
+  const sidebarThreads = () => openThreadSummary && !threads.some((t) => t.root_id === openThreadSummary.root_id)
+    ? [openThreadSummary, ...threads] : threads;
+
   // One channel row (with its nested thread leaves appended right beneath it).
   const appendChannel = (ul, ch, groupID) => {
     const li = document.createElement('li');
@@ -1081,7 +1089,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (ch.muted) { li.classList.add('muted'); li.insertAdjacentHTML('beforeend', '<span class="mute-mark">' + ICON.bellOff + '</span>'); }
     // while a thread with a sidebar row is open only that row is selected, the
     // parent channel row goes plain; a thread without a row keeps the channel lit
-    const threadRow = !!openThreadRoot && threads.some((t) => t.root_id === openThreadRoot);
+    const tree = sidebarThreads();
+    const threadRow = !!openThreadRoot && tree.some((t) => t.root_id === openThreadRoot);
     if (current && ch.id === current.id && !threadRow) li.classList.add('active');
     // Any unread glows the channel name; only @mentions get a numeric badge.
     // A muted channel stays dark unless you are mentioned (or broadcast at).
@@ -1117,7 +1126,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     };
     makeDragRow(li, ch, groupID);
     ul.appendChild(li);
-    const leaves = threads.filter((t) => t.channel_id === ch.id && !isQuiet(t)).map(threadLeafLi);
+    const leaves = tree.filter((t) => t.channel_id === ch.id && !isQuiet(t)).map(threadLeafLi);
     leaves.forEach((li) => ul.appendChild(li));
     if (leaves.length) leaves[leaves.length - 1].classList.add('last');
   };
@@ -1805,6 +1814,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const had = openThreadRoot !== null;
     $('thread-panel').classList.add('hidden');
     openThreadRoot = null;
+    openThreadSummary = null;
     clearThreadAttachment(); // a file staged here must not follow you elsewhere
     if (had) renderChannels(); // clear the active-thread highlight in the sidebar
     if (had && push) syncURL(true);
@@ -2027,6 +2037,23 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (seq !== openThreadSeq) return; // a newer open won
     const changed = openThreadRoot !== rootID;
     if (changed) clearThreadAttachment();
+    const root = out.messages.find((m) => !m.thread_root_id) || out.messages[0];
+    const replies = out.messages.filter((m) => !!m.thread_root_id);
+    openThreadSummary = threads.find((t) => t.root_id === rootID) || (root ? {
+      root_id: root.id,
+      channel_id: root.channel_id,
+      body: root.body,
+      author_id: root.author_id,
+      author_name: root.author_name,
+      created_at: root.created_at,
+      reply_count: replies.length,
+      last_reply_at: replies.at(-1)?.created_at || null,
+      last_activity_at: replies.at(-1)?.created_at || root.created_at,
+      muted: false,
+      unread_count: 0,
+      unread_mentions: 0,
+      subscribed: false,
+    } : null);
     openThreadRoot = rootID;
     if (changed) renderChannels(); // move the active highlight to this thread leaf
     $('thread-panel').classList.remove('hidden');

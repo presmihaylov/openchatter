@@ -132,6 +132,7 @@ Each row rolls back to the previous row's commit; find the commit with
 | room/sidebar response ownership (no migration) | 43 | 43 | nothing; redeploy `74fd117` to restore last-response-wins room refreshes |
 | presence event request amplification (no migration) | 43 | 43 | nothing; redeploy `bc0b476` to restore four structural requests per presence transition |
 | optimistic send response settlement (no migration) | 43 | 43 | nothing; redeploy `37bad65` to restore feed-only optimistic settlement |
+| deep-linked thread discovery (no migration) | 43 | 43 | nothing; redeploy `2f12c76` to remove transient active leaves for readable threads outside the viewer's personal tree |
 
 Task 08 shipped on 2026-09-04 (Maya's call, ahead of the planned 7-day wait). Rolling
 back past `000027` (`-migrate-to 26` or lower) does not restore human tokens: the down
