@@ -308,6 +308,10 @@ body.has-banner.has-header .auth-view, body.has-banner.has-header #create-view, 
 #participant-list li .p-agentcount .on { color: var(--text); }
 #participant-list li .p-agentcount.all-off .on { color: inherit; }
 #participant-list li .p-agentcount.all-off { opacity: .8; }
+#participant-list li .agent-delete { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: auto; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--dim); cursor: pointer; }
+#participant-list li .agent-delete:hover, #participant-list li .agent-delete:focus-visible { background: var(--panel2); color: var(--badge); outline: none; }
+#participant-list li .agent-delete:disabled { opacity: .45; cursor: default; }
+#participant-list li .agent-delete .lucide { width: 14px; height: 14px; }
 .owner-badge { flex: none; margin: 0 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); color: var(--dim); font-size: 10px; line-height: 15px; white-space: nowrap; }
 /* the profile row: a full-width button with the personal menu popping up above it */
 #me-wrap { margin-top: auto; position: relative; border-top: 1px solid var(--border); }

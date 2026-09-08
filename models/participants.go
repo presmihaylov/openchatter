@@ -12,10 +12,6 @@ import (
 
 var ErrLastAdmin = errors.New("a room must keep at least one admin")
 
-// ErrIdentityOnline guards re-claims: an invite code alone must not let a
-// stranger hijack an identity that is actively connected.
-var ErrIdentityOnline = errors.New("that identity is currently online")
-
 // CreateParticipant adds a member; the first participant in a room becomes admin.
 // tokenHash is nil for a human who enters through a login session (userID set).
 // inviteID, when set, spends one use of that link in the same transaction.
@@ -97,67 +93,6 @@ func createParticipantTx(ctx context.Context, tx pgx.Tx, roomID, name, avatar, d
 		return p, err
 	}
 	return p, nil
-}
-
-// ReclaimParticipant re-binds an existing identity to a fresh token: same id
-// and history, but role always drops to member (see below). The old token stops
-// working. Only an offline identity can be re-claimed. Revoked identities stay
-// locked out.
-// ownerID rebinds ownership to the principal of the code actually used, so a
-// rejoin with an owner-scoped code finally stamps the badge; nil (a plain
-// link) keeps the owner the agent already has.
-func (s *Store) ReclaimParticipant(ctx context.Context, roomID, name string, tokenHash []byte, ownerID *string) (Participant, error) {
-	var p Participant
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return p, err
-	}
-	defer tx.Rollback(ctx)
-
-	// serialize with joins and other reclaims in this room
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, roomID); err != nil {
-		return p, err
-	}
-
-	var id string
-	var revoked, online, linked bool
-	err = tx.QueryRow(ctx,
-		`SELECT id, revoked, last_seen_at > now() - $3::interval AND NOT declared_offline, user_id IS NOT NULL
-		 FROM participants WHERE room_id = $1 AND name = $2`,
-		roomID, name, OnlineWindow.String(),
-	).Scan(&id, &revoked, &online, &linked)
-	if err != nil {
-		return p, mapRowErr(err)
-	}
-	if revoked {
-		return p, fmt.Errorf("identity %q was revoked from this room: %w", name, ErrConflict)
-	}
-	// a human who logs in owns their row; a room code must not let anyone post as them
-	if linked {
-		return p, fmt.Errorf("identity %q belongs to a logged-in user: %w", name, ErrConflict)
-	}
-	if online {
-		return p, ErrIdentityOnline
-	}
-
-	// reclaim never inherits role: reclaiming a name (even the room owner's, via a
-	// room code) drops to member, so an offline admin can't be impersonated into
-	// admin. An existing admin must re-grant the role explicitly.
-	if _, err := tx.Exec(ctx,
-		`UPDATE participants SET token_hash = $2, last_seen_at = now(), presence_online = TRUE, declared_offline = FALSE, offline_since_seq = NULL,
-		        owner_id = COALESCE($3, owner_id), role = 'member' WHERE id = $1`,
-		id, tokenHash, ownerID); err != nil {
-		return p, err
-	}
-
-	payload, _ := json.Marshal(map[string]any{"participant_id": id, "name": name})
-	if err := appendEventTx(ctx, tx, roomID, "participant.reclaimed", payload); err != nil {
-		return p, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return p, err
-	}
-	return s.ParticipantByID(ctx, roomID, id)
 }
 
 // ParticipantByTokenHash authenticates a request; revoked participants fail
@@ -419,7 +354,9 @@ func (s *Store) Revoke(ctx context.Context, roomID, id, actorID string) error {
 	}
 
 	if _, err := tx.Exec(ctx,
-		`UPDATE participants SET revoked = true WHERE room_id = $1 AND id = $2`,
+		`UPDATE participants
+		 SET revoked = true, presence_online = false, declared_offline = true
+		 WHERE room_id = $1 AND id = $2`,
 		roomID, id); err != nil {
 		return err
 	}
@@ -457,7 +394,8 @@ func (s *Store) Revoke(ctx context.Context, roomID, id, actorID string) error {
 // returns their names.
 func revokeOwnedAgentsTx(ctx context.Context, tx pgx.Tx, roomID, ownerID string) ([]string, error) {
 	rows, err := tx.Query(ctx,
-		`UPDATE participants SET revoked = true
+		`UPDATE participants
+		 SET revoked = true, presence_online = false, declared_offline = true
 		 WHERE room_id = $1 AND owner_id = $2 AND NOT is_human AND NOT revoked
 		 RETURNING id, name`, roomID, ownerID)
 	if err != nil {

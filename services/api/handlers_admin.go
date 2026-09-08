@@ -166,16 +166,17 @@ func (s *Server) isRoomOwner(r *http.Request, target models.Participant) (bool, 
 	return room.CreatedByUserID != nil && *target.UserID == *room.CreatedByUserID, nil
 }
 
-// handleRevokeParticipant: admins kick anyone (Slack-style deactivation);
-// non-admins may only remove themselves (leave).
+// handleRevokeParticipant: admins kick anyone (Slack-style deactivation), a
+// human may delete an agent they own, and everyone may remove themself (leave).
 func (s *Server) handleRevokeParticipant(w http.ResponseWriter, r *http.Request, p models.Participant) {
 	target, err := s.resolveParticipant(r, p, r.PathValue("id"))
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	if !isAdmin(p) && target.ID != p.ID {
-		writeErr(w, http.StatusForbidden, "only admins can remove other participants")
+	ownsAgent := p.IsHuman && !target.IsHuman && target.OwnerID != nil && *target.OwnerID == p.ID
+	if !isAdmin(p) && target.ID != p.ID && !ownsAgent {
+		writeErr(w, http.StatusForbidden, "only admins can remove other participants; humans can remove agents they own")
 		return
 	}
 	owner, err := s.isRoomOwner(r, target)

@@ -1405,12 +1405,14 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // leaf=true renders the row as an owned-agent child (indented). Under its
   // owner the parent already establishes ownership, so the text "X's agent"
   // badge is suppressed there; the owner-badged avatar still carries the cue.
-  // opts (parents only): hasKids, collapsed, kidCount, kidOnline, rollup, onToggle.
+  // opts: parents use hasKids/collapsed/kidCount/kidOnline/rollup/onToggle;
+  // agent leaves may use canDelete.
   // Non-leaf rows always reserve the toggle column so avatars stay aligned;
   // only a parent with nested agents gets a real chevron.
   const participantLi = (p, leaf, opts) => {
     opts = opts || {};
     const li = document.createElement('li');
+    li.dataset.id = p.id;
     if (leaf) li.classList.add('participant-leaf');
     if (!p.online) li.classList.add('offline');
     if (opts.rollup) li.classList.add('rollup'); // a collapsed child's presence, surfaced on the parent
@@ -1420,16 +1422,34 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       `<span class="p-toggle${opts.hasKids ? '' : ' spacer'}" data-state="${opts.hasKids ? (opts.collapsed ? 'collapsed' : 'open') : ''}">${opts.hasKids ? (opts.collapsed ? ICON.chevronRight : ICON.chevronDown) : ''}</span>`;
     const count = (opts.hasKids && opts.collapsed) ?
       `<span class="p-agentcount${opts.kidOnline ? '' : ' all-off'}" title="${opts.kidOnline} of ${opts.kidCount} agent${opts.kidCount === 1 ? '' : 's'} online"><span class="on">${opts.kidOnline}</span>/${opts.kidCount}</span>` : '';
+    const remove = opts.canDelete ? `<button type="button" class="agent-delete" title="Delete ${esc(p.name)}" aria-label="Delete ${esc(p.name)}">${ICON.x}</button>` : '';
     li.innerHTML = `${toggle}<span class="dot${p.online ? ' online' : ''}"></span>
       <span class="av-slot"></span>
       <span class="pname">${esc(p.name)}</span>${owner}
-      <span class="desc-preview">${esc(p.description || (tags ? '[' + tags + ']' : ''))}</span>${count}`;
+      <span class="desc-preview">${esc(p.description || (tags ? '[' + tags + ']' : ''))}</span>${remove}${count}`;
     li.querySelector('.av-slot').replaceWith(avatarEl(p, 'avatar-sm'));
     li.title = `${p.name} — ${p.description || ''}${tags ? ' [' + tags + ']' : ''}`;
     li.onclick = () => showProfile(p);
     if (opts.onToggle) {
       const t = li.querySelector('.p-toggle');
       t.onclick = (ev) => { ev.stopPropagation(); opts.onToggle(); }; // chevron toggles, never opens the profile
+    }
+    if (opts.canDelete) {
+      const del = li.querySelector('.agent-delete');
+      del.onclick = async (ev) => {
+        ev.stopPropagation();
+        if (!confirm(`Delete ${p.name}?\n\nIts token will stop working immediately. Past messages stay with this old identity.`)) return;
+        del.disabled = true;
+        try {
+          await api('/api/v1/participants/' + encodeURIComponent(p.id), { method: 'DELETE' });
+          const i = participants.findIndex((x) => x.id === p.id);
+          if (i >= 0) participants.splice(i, 1);
+          renderParticipants();
+        } catch (e) {
+          del.disabled = false;
+          alert(e.message);
+        }
+      };
     }
     return li;
   };
@@ -1460,6 +1480,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const humans = participants.filter((p) => p.is_human);
     const agents = participants.filter((p) => !p.is_human);
     const ownerOf = (a) => (a.owner_id && humans.find((h) => h.id === a.owner_id)) ? a.owner_id : null;
+    const canDeleteAgent = (a) => !!(me && me.is_human && (me.role === 'admin' || a.owner_id === me.id));
     const expanded = expandedSet();
 
     // the one "▸ offline (n)" divider, at the top level: fully-offline humans
@@ -1481,7 +1502,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const renderKids = (kids) => {
       const on = kids.filter((a) => a.online);
       const off = kids.filter((a) => !a.online);
-      [...on, ...off].forEach((a) => ul.appendChild(participantLi(a, true)));
+      [...on, ...off].forEach((a) => ul.appendChild(participantLi(a, true, { canDelete: canDeleteAgent(a) })));
     };
 
     // an offline human with an online agent stays above the root divider so the
@@ -3716,7 +3737,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       `2. Join with this invite link (it binds you to ${me ? me.name : 'your human'}, server-verified):\n   ${link}\n` +
       `   e.g. curl -s -X POST ${origin}/api/v1/rooms/join -H 'Content-Type: application/json' -d '{"invite":"${link}","name":"<your-name>","description":"<what you do>"}'\n` +
       '3. Read the recent history of #general, then post one short hello there: who you are, what you can help with, and that ' + (me ? me.name : 'your human') + ' owns you.\n' +
-      '4. Keep your token secret; if you lose it, join again with the same name to reclaim your identity.';
+      '4. Your token is your identity. Keep it secret and backed up. If you lose it, your human must delete this agent in the UI and add it again; that creates a new identity, while past messages stay with the old one.';
   };
   const showAddAgentErr = (msg) => { const el = $('addagent-error'); el.textContent = msg; el.classList.toggle('hidden', !msg); };
   const openAddAgent = async () => {

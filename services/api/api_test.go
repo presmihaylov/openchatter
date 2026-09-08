@@ -1043,51 +1043,6 @@ func TestRoomThreads(t *testing.T) {
 	}
 }
 
-func TestReclaimIdentity(t *testing.T) {
-	srv, store := newTestServer(t)
-	secret, alice, bob := setupRoom(t, srv.URL)
-
-	pid := func(c *testClient, name string) (roomID, id string) {
-		t.Helper()
-		out := c.must("GET", "/api/v1/room", nil, 200)
-		roomID = out["room"].(map[string]any)["id"].(string)
-		for _, p := range out["participants"].([]any) {
-			pm := p.(map[string]any)
-			if pm["name"] == name {
-				return roomID, pm["id"].(string)
-			}
-		}
-		t.Fatalf("participant %q not found", name)
-		return "", ""
-	}
-	roomID, bobID := pid(alice, "bob")
-
-	// while bob is online, an invite code alone must not hijack him
-	c := &testClient{t: t, base: srv.URL}
-	c.must("POST", "/api/v1/rooms/join", map[string]any{"invite": secret, "name": "bob"}, 409)
-
-	// offline bob is reclaimable: same id, fresh token, old token dead
-	if err := store.GoOffline(context.Background(), roomID, bobID); err != nil {
-		t.Fatal(err)
-	}
-	out := c.must("POST", "/api/v1/rooms/join", map[string]any{"invite": secret, "name": "bob"}, 200)
-	if out["reclaimed"] != true {
-		t.Fatalf("want reclaimed=true, got %v", out)
-	}
-	if got := out["participant"].(map[string]any)["id"].(string); got != bobID {
-		t.Fatalf("reclaim changed identity: got %s want %s", got, bobID)
-	}
-	bob2 := &testClient{t: t, base: srv.URL, token: out["token"].(string)}
-	bob2.must("GET", "/api/v1/me", nil, 200)
-	if status, _ := bob.do("GET", "/api/v1/me", nil); status != 401 {
-		t.Fatalf("old token still works after reclaim: %d", status)
-	}
-
-	// a revoked identity stays locked out even when offline
-	alice.must("DELETE", "/api/v1/participants/"+bobID, nil, 200)
-	c.must("POST", "/api/v1/rooms/join", map[string]any{"invite": secret, "name": "bob"}, 409)
-}
-
 func TestOwnership(t *testing.T) {
 	srv, _ := newTestServer(t)
 
@@ -1348,9 +1303,8 @@ func TestEmojiAvatarIsGone(t *testing.T) {
 	noAvatar("entering member", entered)
 }
 
-// TestInviteLinkLimits: expiry refuses new members; there is no use cap (the
-// old max_uses field is gone), and a reclaim is the same participant coming
-// back, so it spends nothing.
+// TestInviteLinkLimits: expiry refuses new members and there is no use cap (the
+// old max_uses field is gone). A duplicate name is always refused.
 func TestInviteLinkLimits(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, alice, _ := setupRoom(t, srv.URL)
@@ -1369,27 +1323,26 @@ func TestInviteLinkLimits(t *testing.T) {
 	first := &testClient{t: t, base: srv.URL}
 	first.token = first.must("POST", "/api/v1/rooms/join", map[string]any{"invite": url, "name": "solo"}, 201)["token"].(string)
 	(&testClient{t: t, base: srv.URL}).must("POST", "/api/v1/rooms/join", map[string]any{"invite": url, "name": "second"}, 201)
-	// solo restarts and reclaims its name on the same link
+	// solo going offline never gives possession of its name to another token
 	first.must("POST", "/api/v1/me/offline", nil, 200)
-	out := (&testClient{t: t, base: srv.URL}).must("POST", "/api/v1/rooms/join", map[string]any{"invite": url, "name": "solo"}, 200)
-	if out["reclaimed"] != true {
-		t.Fatalf("reclaim: %v", out)
+	if st, _ := (&testClient{t: t, base: srv.URL}).do("POST", "/api/v1/rooms/join", map[string]any{"invite": url, "name": "solo"}); st != 409 {
+		t.Fatalf("duplicate name: %d, want 409", st)
 	}
 	for _, v := range alice.must("GET", "/api/v1/invites", nil, 200)["invites"].([]any) {
 		vm := v.(map[string]any)
 		if vm["id"] == once["id"] && (vm["uses"] != 2.0 || vm["status"] != "active") {
-			t.Fatalf("two joins and a reclaim must count two uses: %v", vm)
+			t.Fatalf("a refused duplicate must not spend a use: %v", vm)
 		}
 	}
 
-	// an expired link refuses even a reclaim
+	// an expired link is checked before the duplicate name
 	expired := alice.must("POST", "/api/v1/invites", map[string]any{"expires_in_seconds": 1}, 201)["invite"].(map[string]any)
 	joiner := &testClient{t: t, base: srv.URL}
 	joiner.token = joiner.must("POST", "/api/v1/rooms/join", map[string]any{"invite": expired["url"], "name": "quick"}, 201)["token"].(string)
 	joiner.must("POST", "/api/v1/me/offline", nil, 200)
 	time.Sleep(1100 * time.Millisecond)
 	if st, out := (&testClient{t: t, base: srv.URL}).do("POST", "/api/v1/rooms/join", map[string]any{"invite": expired["url"], "name": "quick"}); st != 403 || out["code"] != "invite_expired" {
-		t.Fatalf("reclaim on expired: %d %v", st, out)
+		t.Fatalf("duplicate on expired link: %d %v", st, out)
 	}
 
 	// peek answers for a live and a dead link, never for an unknown one
@@ -1425,58 +1378,6 @@ func TestInviteDiesOnRevoke(t *testing.T) {
 	c.must("POST", "/api/v1/rooms/join", map[string]any{"invite": code, "name": "ghost"}, 403)
 }
 
-// TestReclaimRebindsOwner locks in that a reclaim binds ownership to the
-// principal of the code actually used, in both directions: reclaim via an
-// owner-scoped code takes on that owner; reclaim via the room code clears it.
-// Without the rebind a reclaim silently keeps the stale owner.
-func TestReclaimRebindsOwner(t *testing.T) {
-	srv, store := newTestServer(t)
-
-	roomCode := createRoom(t, srv.URL, "owned")["invite"].(string)
-
-	join := func(code, name string, human bool, want int) (*testClient, map[string]any) {
-		cc := &testClient{t: t, base: srv.URL}
-		out := cc.must("POST", "/api/v1/rooms/join", map[string]any{
-			"invite": code, "name": name, "is_human": human,
-		}, want)
-		if tok, ok := out["token"].(string); ok {
-			cc.token = tok
-		}
-		return cc, out["participant"].(map[string]any)
-	}
-
-	maya, mayaP := join(roomCode, "maya", true, 201)
-	mayaID := mayaP["id"].(string)
-	mayaCode := maya.must("POST", "/api/v1/invites", map[string]any{"bind_owner": true}, 201)["join_url"].(string)
-
-	// helper first joins on the room code: no owner (the creator's seat is vacated)
-	_, helperP := join(roomCode, "helper", false, 201)
-	if helperP["owner_id"] != nil {
-		t.Fatalf("room-code agent has owner: %v", helperP)
-	}
-	helperID := helperP["id"].(string)
-	roomID := maya.must("GET", "/api/v1/room", nil, 200)["room"].(map[string]any)["id"].(string)
-
-	// offline, then reclaimed via maya's owner-scoped code: ownership binds to maya
-	if err := store.GoOffline(context.Background(), roomID, helperID); err != nil {
-		t.Fatal(err)
-	}
-	_, reclaimed := join(mayaCode, "helper", false, 200)
-	if reclaimed["owner_id"] != mayaID {
-		t.Fatalf("reclaim did not rebind owner: got %v want %v", reclaimed["owner_id"], mayaID)
-	}
-
-	// offline again, reclaimed via the room code: the owner stays (task 19:
-	// a plain link never strips an agent of its human)
-	if err := store.GoOffline(context.Background(), roomID, helperID); err != nil {
-		t.Fatal(err)
-	}
-	_, rekept := join(roomCode, "helper", false, 200)
-	if rekept["owner_id"] != mayaID {
-		t.Fatalf("room-code reclaim changed the owner: %v", rekept["owner_id"])
-	}
-}
-
 // TestArchiveEmitsEvent guards the archive/unarchive event emission after
 // folding the UPDATE and the event into one transaction, so an archive can
 // never land without its event (and the toggle stays observable to clients).
@@ -1508,48 +1409,6 @@ func TestArchiveEmitsEvent(t *testing.T) {
 	alice.must("PATCH", "/api/v1/channels/"+chID, map[string]any{"archived": false}, 200)
 	if !hasEvent(c1, "channel.unarchived") {
 		t.Fatal("unarchive did not emit channel.unarchived")
-	}
-}
-
-// TestReclaimDropsToMember locks in that a reclaim never inherits role. An admin
-// who goes offline can otherwise be impersonated into admin: a member who knows
-// the name reclaims it via the room code and rides in with the old role. The
-// reclaimed identity must land as a plain member.
-func TestReclaimDropsToMember(t *testing.T) {
-	srv, store := newTestServer(t)
-
-	roomCode := createRoom(t, srv.URL, "takeover")["invite"].(string)
-
-	join := func(code, name string, want int) (*testClient, map[string]any) {
-		cc := &testClient{t: t, base: srv.URL}
-		out := cc.must("POST", "/api/v1/rooms/join", map[string]any{
-			"invite": code, "name": name, "is_human": false,
-		}, want)
-		if tok, ok := out["token"].(string); ok {
-			cc.token = tok
-		}
-		return cc, out["participant"].(map[string]any)
-	}
-
-	// first joiner is admin
-	admin, adminP := join(roomCode, "boss", 201)
-	if adminP["role"] != "admin" {
-		t.Fatalf("first joiner not admin: %v", adminP)
-	}
-	adminID := adminP["id"].(string)
-	roomID := admin.must("GET", "/api/v1/room", nil, 200)["room"].(map[string]any)["id"].(string)
-
-	// admin goes offline; reclaiming the name via the room code rebinds the same
-	// identity but must NOT carry the admin role over
-	if err := store.GoOffline(context.Background(), roomID, adminID); err != nil {
-		t.Fatal(err)
-	}
-	_, reclaimed := join(roomCode, "boss", 200)
-	if reclaimed["id"] != adminID {
-		t.Fatalf("reclaim rebound a different identity: %v", reclaimed)
-	}
-	if reclaimed["role"] != "member" {
-		t.Fatalf("reclaim inherited role %v, want member (insider takeover path)", reclaimed["role"])
 	}
 }
 
@@ -1668,7 +1527,7 @@ func TestSkillDoc(t *testing.T) {
 		"Agents cannot create rooms.",
 		"an agent token gets 401 `session_required`",
 		"Ask your human to create a workspace in the web UI",
-		"cannot reclaim it (409)",
+		"an existing name returns 409",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("skill doc missing %q", want)
@@ -1684,6 +1543,27 @@ func TestSkillDoc(t *testing.T) {
 	for _, gone := range skillCreateRecipeGone {
 		if strings.Contains(doc, gone) {
 			t.Fatalf("skill doc still carries the unauthenticated create recipe %q", gone)
+		}
+	}
+	for _, gone := range []string{"join again with\nthe SAME name", `"reclaimed": true`, "Reclaim-by-name"} {
+		if strings.Contains(doc, gone) {
+			t.Fatalf("skill doc still teaches name-based identity: %q", gone)
+		}
+	}
+
+	// Step 1 and every harness page carry the same token-custody contract.
+	for _, path := range []string{"/skill", "/skill/claude-code", "/skill/codex", "/skill/opencode", "/skill/pi", "/skill/hermes"} {
+		r, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		page := string(body)
+		for _, want := range []string{"Keep your token", "your identity; your name is not", "~/.openchatter/secrets/", "mode 700", "mode 600", "Never print", "command-line arguments", "commit", "new token and id", "past messages"} {
+			if !strings.Contains(page, want) {
+				t.Fatalf("%s is missing token-custody text %q", path, want)
+			}
 		}
 	}
 

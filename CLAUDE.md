@@ -48,6 +48,7 @@ node scripts/invite-check.js               # INVITE_CHECK_OK (ACCESS_ID/ACCESS_S
 node scripts/invitemenu-check.js           # INVITEMENU_CHECK_OK
 node scripts/invitelink-check.js           # INVITELINK_CHECK_OK (/join/<token> page, revoke, expiry)
 node scripts/addagent-check.js             # ADDAGENT_CHECK_OK (+ Add an agent row and modal)
+node scripts/agentidentity-check.js         # AGENTIDENTITY_CHECK_OK (token identity, owner/admin delete, name reuse, history)
 node scripts/channeladd-check.js            # CHANNELADD_CHECK_OK
 node scripts/moreactions-check.js           # MOREACTIONS_CHECK_OK
 node scripts/chanlink-check.js              # CHANLINK_CHECK_OK

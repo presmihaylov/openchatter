@@ -241,7 +241,7 @@ const userStatus = (page, tok) => page.evaluate(async (t) => {
   await page.setRequestInterception(false);
 
   // the user's own workspace, plus a legacy act_ join in it under another
-  // name (the creator's row is linked to the account and cannot be reclaimed)
+  // name (the creator's row is linked to the account and cannot be adopted by name)
   const created = await createRoom(SERVER, await session(page), 'login check');
   const slug = created.room.slug;
   const joined = await api('/api/v1/rooms/join', { method: 'POST', body: { invite_code: created.invite_code, name: 'Legacy Tester', is_human: true } });

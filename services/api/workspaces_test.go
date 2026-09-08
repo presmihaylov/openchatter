@@ -207,19 +207,16 @@ func TestAgentJoinRowUnchanged(t *testing.T) {
 	}
 }
 
-func TestJoinCannotReclaimLinkedHuman(t *testing.T) {
-	srv, store := newTestServer(t)
+func TestJoinCannotDuplicateLinkedHuman(t *testing.T) {
+	srv, _ := newTestServer(t)
 	creator, _, room := sessionRoom(t, srv.URL, "linked")
 	me := creator.must("GET", "/api/v1/me", nil, 200)
-	if err := store.BackdateSeen(context.Background(), me["id"].(string)); err != nil {
-		t.Fatal(err)
-	}
 	c := &testClient{t: t, base: srv.URL}
 	st, out := c.do("POST", "/api/v1/rooms/join", map[string]any{
 		"invite": room["invite"], "name": me["name"], "is_human": true,
 	})
-	if st != 409 || !strings.Contains(out["error"].(string), "logged-in") {
-		t.Fatalf("reclaim of a linked human: %d %v", st, out)
+	if st != 409 || !strings.Contains(out["error"].(string), "taken") {
+		t.Fatalf("duplicate linked human: %d %v", st, out)
 	}
 	// the row is untouched and still the user's
 	after := creator.must("GET", "/api/v1/me", nil, 200)
@@ -818,6 +815,80 @@ func TestKickMembers(t *testing.T) {
 	}
 }
 
+// An agent's token is its identity. A name alone can never adopt an existing
+// row; only deleting the old agent frees that name for a brand-new identity.
+func TestAgentTokenIdentityDeleteAndRecreate(t *testing.T) {
+	srv, _ := newTestServer(t)
+	creator, _, room := sessionRoom(t, srv.URL, "token identity")
+	slug := room["slug"].(string)
+
+	enter := func(name string) (*testClient, string) {
+		t.Helper()
+		c, _ := registerAs(t, srv.URL, name)
+		c.slug = slug
+		out := c.must("POST", "/api/v1/workspaces/"+slug+"/enter", map[string]any{"invite": room["invite"]}, 200)
+		return c, out["participant"].(map[string]any)["id"].(string)
+	}
+	owner, ownerID := enter("Olive Owner")
+	other, _ := enter("Nora Neighbor")
+	bound := owner.must("POST", "/api/v1/invites", map[string]any{"bind_owner": true}, 201)["join_url"].(string)
+
+	agent := &testClient{t: t, base: srv.URL}
+	joined := agent.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": bound, "name": "worker", "description": "keeps one identity",
+	}, 201)
+	agent.token = joined["token"].(string)
+	oldID := joined["participant"].(map[string]any)["id"].(string)
+	if joined["participant"].(map[string]any)["owner_id"] != ownerID {
+		t.Fatalf("bound owner: %v", joined["participant"])
+	}
+	oldMessage := agent.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "old identity spoke"}, 201)
+
+	// Active or offline makes no difference: possession of an invite and the
+	// name never replaces the token that owns the existing identity.
+	agent.must("POST", "/api/v1/me/offline", nil, 200)
+	if st, _ := (&testClient{t: t, base: srv.URL}).do("POST", "/api/v1/rooms/join", map[string]any{"invite": bound, "name": "worker"}); st != 409 {
+		t.Fatalf("offline duplicate name joined: %d, want 409", st)
+	}
+
+	// A human manages exactly their own agents; admins keep their wider scope.
+	if st, _ := other.do("DELETE", "/api/v1/participants/"+oldID, nil); st != 403 {
+		t.Fatalf("non-owner deleted agent: %d, want 403", st)
+	}
+	owner.must("DELETE", "/api/v1/participants/"+oldID, nil, 200)
+	if st, _ := agent.do("GET", "/api/v1/me", nil); st != 401 {
+		t.Fatalf("deleted agent token: %d, want 401", st)
+	}
+	var revoked, online bool
+	if err := testDB(t).QueryRow(context.Background(),
+		`SELECT revoked, presence_online FROM participants WHERE id = $1`, oldID).Scan(&revoked, &online); err != nil {
+		t.Fatal(err)
+	}
+	if !revoked || online {
+		t.Fatalf("deleted row state: revoked=%v online=%v", revoked, online)
+	}
+
+	// The released name creates a new row and token; old messages still point
+	// at the tombstoned row and retain its author name.
+	fresh := (&testClient{t: t, base: srv.URL}).must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": bound, "name": "worker", "description": "new identity",
+	}, 201)
+	newID := fresh["participant"].(map[string]any)["id"].(string)
+	if newID == oldID || fresh["token"] == joined["token"] {
+		t.Fatalf("delete/recreate reused identity: old=%s new=%s", oldID, newID)
+	}
+	history := creator.must("GET", "/api/v1/messages/"+oldMessage["id"].(string), nil, 200)
+	if history["author_id"] != oldID || history["author_name"] != "worker" || history["body"] != "old identity spoke" {
+		t.Fatalf("old message lost attribution: %v", history)
+	}
+
+	creator.must("DELETE", "/api/v1/participants/"+newID, nil, 200)
+	freshClient := &testClient{t: t, base: srv.URL, token: fresh["token"].(string)}
+	if st, _ := freshClient.do("GET", "/api/v1/me", nil); st != 401 {
+		t.Fatalf("admin-deleted fresh token: %d, want 401", st)
+	}
+}
+
 func TestCreateRoomSlug(t *testing.T) {
 	srv, _ := newTestServer(t)
 	c, _ := register(t, srv.URL, uniqUser(), "correct horse")
@@ -969,10 +1040,10 @@ func TestWorkspaceOrderAndMute(t *testing.T) {
 // TestAgentOwners: an agent belongs to a human (task 19). A plain-link join
 // hands it to the creator, a bound link to the link's owner; removing the
 // human revokes their agents at once (tokens 401, roster clean, one counted
-// #general line); rejoining does not revive them; admins rebind an owner; the
+// #general line); duplicate names do not adopt them; admins rebind an owner; the
 // creator and the last admin can neither be removed nor leave.
 func TestAgentOwners(t *testing.T) {
-	srv, store := newTestServer(t)
+	srv, _ := newTestServer(t)
 	creator, _, room := sessionRoom(t, srv.URL, "owned crew")
 	slug := room["slug"].(string)
 	creatorPID := creator.must("GET", "/api/v1/me", nil, 200)["id"].(string)
@@ -1048,19 +1119,18 @@ func TestAgentOwners(t *testing.T) {
 	if !found {
 		t.Fatalf("no counted #general line: %v", general)
 	}
-	// a restart on the plain link keeps an agent with the human it has (a
-	// reclaim never hands it to the creator)
-	roomID := creator.must("GET", "/api/v1/room", nil, 200)["room"].(map[string]any)["id"].(string)
+	// A duplicate name on a plain link cannot transfer an existing agent to the
+	// creator; the original token and owner remain the identity.
 	keeperOwner, keeperOwnerPID := enter()
 	keeperLink := keeperOwner.must("POST", "/api/v1/invites", map[string]any{"bind_owner": true}, 201)["join_url"].(string)
 	_, kp := joinAgent(keeperLink, "keeper")
-	if err := store.GoOffline(context.Background(), roomID, kp["id"].(string)); err != nil {
-		t.Fatal(err)
-	}
 	rc := &testClient{t: t, base: srv.URL}
-	re := rc.must("POST", "/api/v1/rooms/join", map[string]any{"invite": room["invite"], "name": "keeper", "description": "t"}, 200)["participant"].(map[string]any)
-	if re["owner_id"] != keeperOwnerPID {
-		t.Fatalf("plain-link reclaim changed the owner: %v want %s", re["owner_id"], keeperOwnerPID)
+	if st, _ := rc.do("POST", "/api/v1/rooms/join", map[string]any{"invite": room["invite"], "name": "keeper", "description": "t"}); st != 409 {
+		t.Fatalf("plain-link duplicate name: %d, want 409", st)
+	}
+	kept := creator.must("GET", "/api/v1/participants/"+kp["id"].(string), nil, 200)
+	if kept["owner_id"] != keeperOwnerPID {
+		t.Fatalf("duplicate join changed owner: %v want %s", kept["owner_id"], keeperOwnerPID)
 	}
 	// a removed human stays out, and so does their agent
 	if st, out := omar.do("POST", "/api/v1/workspaces/"+slug+"/enter", map[string]any{"invite": room["invite"]}); st != 403 || out["reason"] != "revoked" {

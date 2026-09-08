@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -425,7 +426,7 @@ func scratchDB(t *testing.T) string {
 func TestMigrateTo(t *testing.T) {
 	ctx := context.Background()
 	dbURL := scratchDB(t)
-	const latest = 42
+	const latest = 43
 	// 000024 created users; rolling to the version before it drops the table
 	const beforeUsers = 23
 
@@ -473,6 +474,62 @@ func TestMigrateTo(t *testing.T) {
 	}
 	var version int
 	if err := s.pool.QueryRow(ctx, "SELECT version FROM schema_migrations").Scan(&version); err != nil || version != latest {
+		t.Fatalf("version after re-open: %d %v", version, err)
+	}
+}
+
+func TestTokenIdentityMigrationRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	dbURL := scratchDB(t)
+	s, err := Open(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, err := s.CreateRoom(ctx, "identity migration", secrets.RoomSlug(), secrets.InviteCode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, oldHash := secrets.NewToken()
+	old, err := s.CreateParticipant(ctx, room.ID, "same-name", DefaultAvatar, "old", false, oldHash, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE participants SET revoked = true WHERE id = $1`, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, newHash := secrets.NewToken()
+	fresh, err := s.CreateParticipant(ctx, room.ID, "same-name", DefaultAvatar, "new", false, newHash, nil, nil, "")
+	if err != nil {
+		t.Fatalf("migration 43 did not free a revoked name: %v", err)
+	}
+	s.Close()
+
+	if got, err := MigrateTo(ctx, dbURL, 42); err != nil || got != 42 {
+		t.Fatalf("MigrateTo 42: got %d %v", got, err)
+	}
+	conn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldName, freshName string
+	if err := conn.QueryRow(ctx, `SELECT name FROM participants WHERE id = $1`, old.ID).Scan(&oldName); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT name FROM participants WHERE id = $1`, fresh.ID).Scan(&freshName); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close(ctx)
+	if freshName != "same-name" || !strings.HasPrefix(oldName, "same-name-deleted-") {
+		t.Fatalf("rollback names: old=%q fresh=%q", oldName, freshName)
+	}
+
+	s, err = Open(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("Open after rollback: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.pool.QueryRow(ctx, `SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != 43 {
 		t.Fatalf("version after re-open: %d %v", version, err)
 	}
 }

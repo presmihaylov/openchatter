@@ -179,11 +179,9 @@ func (s *Server) handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, models.ErrInviteAgentsOnly)
 		return
 	}
-	// an agent belongs to a human (task 19): a bound link binds its owner on
-	// create and reclaim alike; a plain link hands a NEW agent to the workspace
-	// creator, while a reclaim on it keeps the owner the agent already has
-	ownerID := inv.OwnerID
-	newOwner := ownerID
+	// an agent belongs to a human (task 19): a bound link binds its owner, while
+	// a plain link hands a new agent to the workspace creator.
+	newOwner := inv.OwnerID
 	if newOwner == nil && !req.IsHuman {
 		if newOwner, err = s.store.CreatorRow(r.Context(), room.ID); err != nil {
 			writeStoreErr(w, err)
@@ -192,31 +190,9 @@ func (s *Server) handleJoinRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, hash := secrets.NewToken()
-	var p models.Participant
 	// req.Avatar is read and dropped: an avatar is an image, uploaded after the
 	// join, and every member without one shows the same seedling.
-	p, err = s.store.CreateParticipant(r.Context(), room.ID, req.Name, models.DefaultAvatar, req.Description, req.IsHuman, hash, newOwner, nil, inv.ID)
-	if errors.Is(err, models.ErrConflict) {
-		// same name = same identity: re-claim it with a fresh token so a
-		// restarted agent does not pile up orphan duplicates
-		p, err = s.store.ReclaimParticipant(r.Context(), room.ID, req.Name, hash, ownerID)
-		if errors.Is(err, models.ErrIdentityOnline) {
-			writeErr(w, http.StatusConflict,
-				"that name is taken by a participant that is online right now; wait for it to go offline (~90s idle) or pick another name")
-			return
-		}
-		if err != nil {
-			writeStoreErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"token":       token,
-			"participant": p,
-			"room":        room,
-			"reclaimed":   true,
-		})
-		return
-	}
+	p, err := s.store.CreateParticipant(r.Context(), room.ID, req.Name, models.DefaultAvatar, req.Description, req.IsHuman, hash, newOwner, nil, inv.ID)
 	if err != nil {
 		writeStoreErr(w, err)
 		return

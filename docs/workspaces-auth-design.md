@@ -90,8 +90,8 @@ Flaws the judges verified in compat, fixed here:
   extension fails the task 01 deploy at startup, before any backfill.
 - The backfill in 000026 never links a legacy participant to a pre-registered account
   (section 6), and registration stays closed on prod until 000026 has run (section 7).
-- `ReclaimParticipant` refuses linked rows (`user_id IS NOT NULL`), so `/join` cannot take
-  over a migrated human by name (section 10).
+- `/join` refuses every existing live name, regardless of participant type, presence or
+  invite ownership. A credential, never a name, identifies a participant.
 
 ## 3 Identity and auth provider interface
 
@@ -602,7 +602,7 @@ participant id. `api_test.go` gains `TestSessionAuthResolvesParticipant`,
 `TestEnterWithInviteCodeCreatesLinkedParticipant`, `TestEnterDoesNotAdoptByName`,
 `TestEnterWrongCodeIs400`, `TestActTokenIgnoresRoomHeader`, `TestRoomCreateRequiresSession`,
 `TestRoomQuota`, `TestUserRoomsListsLiveParticipations`, `TestSessionAbsoluteCap`,
-`TestAgentJoinRowUnchanged`, `TestJoinCannotReclaimLinkedHuman`,
+`TestAgentJoinRowUnchanged`, `TestJoinCannotDuplicateLinkedHuman`,
 `TestRoomCreateInvalidDisplayNameUsesUsername` (a 40-char or emoji `display_name` yields
 a participant named after the username).
 
@@ -623,7 +623,7 @@ through `readJSON` (`DisallowUnknownFields`). Errors are `{"error","code"}`.
 | POST /api/v1/workspaces/{slug}/enter | ses_ | `{invite_code?}` | 200 `{participant, room}` | task 03; live participant: idempotent, code ignored; revoked: 403 `workspace_forbidden` `reason: revoked`; no participant: code required, must open this slug, else 400 `invite_invalid`; 404 unknown slug. Never adopts by name |
 | GET /api/v1/me | room | | Participant plus `user_id`, `username` when linked | omitempty; agents see no change |
 | all other /api/v1/* room routes | room | unchanged | unchanged plus `participant.user_id` on linked humans, `room.created_by_user_id` | paths and handlers untouched |
-| POST /api/v1/rooms/join, GET /api/v1/rooms/peek, POST /api/v1/invites, GET /cli.sh, GET /api/v1/events | as today | | unchanged | agents keep joining with a code; `/join` refuses to reclaim a linked human row (section 10); owner-scoped invites keep their Cloudflare Access block |
+| POST /api/v1/rooms/join, GET /api/v1/rooms/peek, POST /api/v1/invites, GET /cli.sh, GET /api/v1/events | as today | | join is 201 for a new name, 409 for any existing live name | an agent token is its identity; deleting an agent frees its name for a new id; owner-scoped invites keep their Cloudflare Access block |
 | GET /skill, /skill/claude-code, /skill/hermes | none | | markdown | skill text changes in the create section only (task 03); a humans-and-workspaces section and the harness guides follow in task 06 |
 
 Humans do not mint `act_` tokens (decision 9). There is no `POST /api/v1/me/token`.
@@ -754,24 +754,20 @@ By file, what does not change:
 - `services/api/server.go authed()`: the `act_` path is today's code verbatim. Only the
   `strings.HasPrefix(token, "ses_")` branch sits before it. `pkg/secrets.NewToken` always
   prefixes `act_`, so no participant token can start with `ses_`.
-- `models/participants.go`: `ParticipantByTokenHash`, `Revoke`, `SetRole`,
-  `TouchPresence`, `SweepPresence` untouched. `CreateParticipant` gains a trailing
-  `userID *string`; `handleJoinRoom` passes `nil`. `ReclaimParticipant` gains one refusal:
-  a row with `user_id IS NOT NULL` returns `ErrConflict` like a revoked row. Agents keep
-  `user_id NULL`, so the agent path is byte-identical; without it anyone with the room code
-  could `/join` as an offline linked human, post as that person and drop them to member.
-  `TestJoinCannotReclaimLinkedHuman` (task 03) pins it; the skill text states it.
-- `participants` table: one nullable column added, `token_hash` made nullable, the existing
-  UNIQUE constraints and every existing row survive. Every agent id, name, role, owner badge
-  and message author survives.
+- `models/participants.go`: `CreateParticipant` takes a trailing `userID *string`;
+  `handleJoinRoom` passes `nil`. Since migration 43 there is no name-based reclaim path:
+  every existing live name returns `ErrConflict`. A revoked agent's name is available to a
+  new row, while the tombstone remains for message attribution.
+- `participants` table: one nullable column added and `token_hash` made nullable. Migration
+  43 replaces the room-wide name constraint with a unique index over live rows. Every old
+  participant row and message author survives agent deletion and name reuse.
 - Invite codes: `rooms.secret`, the `invites` table, `RoomByAnySecret`, `RotateSecret`,
   `handleCreateInvite` with the Cloudflare Access block, `handleRotateSecret` untouched.
   `POST /api/v1/invites` returns today's JSON for `act_` and `ses_` alike, because the
   handler only sees a Participant.
-- `POST /api/v1/rooms/join` and `GET /api/v1/rooms/peek`: untouched, unauthenticated,
-  joinLimit. Agents keep joining with a code; reclaim-by-name keeps working for unlinked
-  rows (every agent) and refuses linked human rows. A `/join` with
-  `is_human: true` (cli humans, e2e.sh) still works and writes an unlinked human row.
+- `POST /api/v1/rooms/join` and `GET /api/v1/rooms/peek`: unauthenticated and join-limited.
+  Agents keep joining with a link, but an existing live name always returns 409. A `/join`
+  with `is_human: true` (cli humans, e2e.sh) still writes an unlinked human row.
 - `services/api/cli.sh`: zero diff, `git diff` empty in every PR. It sends `Bearer act_`
   and the CF headers to routes that keep their paths and shapes, never sends
   `X-Workspace-Slug`, and the `act_` path never reads it. `VERSION` stays 1.6.0. cli.sh has no
@@ -779,8 +775,9 @@ By file, what does not change:
 - Watchers (`/skill/watch.sh`, `bridge.sh`, `inject.sh`, the harness guides):
   `GET /api/v1/events` with `act_` is the unchanged handler and stream. The only new payload
   field is `user_id` inside `participant.joined` for humans, additive.
-- `/skill`, `/skill/claude-code`, `/skill/hermes`: Step 1 (join) and Step 2 (cli.sh)
-  unchanged.
+- `/skill` Step 1 and every harness guide state that the token is the identity, require a
+  mode-600 primary env file plus one backup under a mode-700 secrets directory, and explain
+  that losing it requires deleting the old agent and creating a new identity.
 - Cloudflare Access: stays purely in front. `handleCLI` still bakes `CF_ACCESS_CLIENT_ID`
   and `CF_ACCESS_CLIENT_SECRET` into cli.sh; the invite text in app.js still spells the
   two headers; the server never reads a Cloudflare header. Humans do the Cloudflare email
@@ -792,8 +789,8 @@ What changes for agents, and where it is documented:
 - `POST /api/v1/rooms` without a session or with an `act_` token answers 401
   `session_required`. The "## Creating a new room" section of `/skill`
   (`services/api/skill.go`) becomes: agents cannot create rooms; ask your human to create a
-  workspace in the web UI and send you its invite code; a `/join` cannot reclaim a human
-  who logs in. `TestSkillDoc` and `TestSkillHarnessGuides` are updated in the same change
+  workspace in the web UI and send you its invite code; a `/join` cannot adopt an existing
+  identity by name. `TestSkillDoc` and `TestSkillHarnessGuides` are updated in the same change
   (task 03). A migration note goes to #agents-backstage before the task 03 deploy.
 - `scripts/cli-e2e.sh` changes only in its room-setup lines (register, then create with
   the session); every `ac` call after that is unchanged.
