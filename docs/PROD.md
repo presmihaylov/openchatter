@@ -125,6 +125,7 @@ Each row rolls back to the previous row's commit; find the commit with
 | channel navigation snapshot race (no migration) | 43 | 43 | nothing; redeploy `913f378` to restore the unguarded page/thread reconciliation |
 | cold channel first-load race (no migration) | 43 | 43 | nothing; redeploy `a67e8e7` to restore the previous-channel bleed and untracked first-load events |
 | modal request ownership (no migration) | 43 | 43 | nothing; redeploy `9bf1691` to restore stale profile/member response behavior |
+| optimistic send navigation cleanup (no migration) | 43 | 43 | nothing; redeploy `870af1f` to restore cross-navigation pending-send leaks |
 
 Task 08 shipped on 2026-09-04 (Maya's call, ahead of the planned 7-day wait). Rolling
 back past `000027` (`-migrate-to 26` or lower) does not restore human tokens: the down

@@ -2078,9 +2078,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
 
   // drop the optimistic placeholder for one of my sends once its real copy lands
-  const settleMine = (m) => {
-    if (m.author_id !== me.id) return;
-    const i = pendingSends.findIndex((p) => p.rootID === (m.thread_root_id || null) && p.body === m.body);
+  const settleMine = (m, eventSlug = slug) => {
+    const i = pendingSends.findIndex((p) => p.workspace === eventSlug && p.channelID === m.channel_id
+      && p.authorID === m.author_id && p.rootID === (m.thread_root_id || null) && p.body === m.body);
     if (i < 0) return;
     pendingSends[i].node.remove();
     pendingSends.splice(i, 1);
@@ -2089,6 +2089,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const post = async (body, threadRootID) => {
     const rootID = threadRootID || null;
     const which = threadRootID ? 'thread' : 'main';
+    const workspace = slug;
+    const channelID = current.id;
+    const authorID = me.id;
     const att = pendingAtt[which];
     // a human typing "@foo" usually means literal text, not a dead mention, so
     // the strict 422 stays for API clients and the UI just posts
@@ -2098,7 +2101,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
 
     // show the message immediately, before the server round-trip
     const node = optimisticEl(body, rootID, att);
-    const rec = { body, rootID, node };
+    const rec = { body, rootID, node, workspace, channelID, authorID };
     pendingSends.push(rec);
     if (!rootID && current) {
       const box = $('messages'); box.appendChild(node); syncDateDividers(box); box.scrollTop = box.scrollHeight;
@@ -2108,7 +2111,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (att) { pendingAtt[which] = null; attachEls(which).pend.classList.add('hidden'); }
 
     try {
-      const sent = await api(`/api/v1/channels/${current.id}/messages`, { method: 'POST', body: payload });
+      const sent = await api(`/api/v1/channels/${channelID}/messages`, { method: 'POST', body: payload, ws: workspace });
       // mentioning somebody outside the channel silently reaches nobody
       if (sent && sent.warnings && sent.warnings.length) notice(sent.warnings[0], true);
     } catch (e) {
@@ -2268,6 +2271,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // notifyPrefs is loaded once at boot and read by the feed
   const applyEvent = async (ev) => {
     const t = ev.type;
+    if (t === 'message.created') settleMine(ev.payload, slug);
     // the feed cursors predate the boot loads, so a message the page already
     // holds can come round again: drop it, the counts already include it
     if (!pageApply(active(), ev)) return;
@@ -2275,7 +2279,6 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const m = ev.payload;
       maybeNotify(m);
       if (current && m.channel_id === current.id && !m.thread_root_id) {
-        settleMine(m); // clear my optimistic placeholder before the real append
         const box = $('messages');
         const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
         box.appendChild(msgEl(m, false));
@@ -2296,7 +2299,6 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         }
       }
       if (m.thread_root_id && m.thread_root_id === openThreadRoot) {
-        settleMine(m); // the rebuild wipes the placeholder node; drop its record too
         openThread(openThreadRoot);
       }
       if (m.thread_root_id && current && m.channel_id === current.id) {
@@ -2405,6 +2407,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       return;
     }
     const t = ev.type;
+    // The echo owns its optimistic row even if channel/workspace navigation
+    // detached that row, or a warmed page already contains the message.
+    if (t === 'message.created') settleMine(ev.payload, wsSlug);
     if (t === 'message.reaction') {
       pageApply(e, ev);
       reactionMap[ev.payload.message_id] = ev.payload.reactions || [];
