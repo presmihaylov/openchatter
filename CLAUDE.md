@@ -54,6 +54,7 @@ node scripts/moreactions-check.js           # MOREACTIONS_CHECK_OK
 node scripts/chanlink-check.js              # CHANLINK_CHECK_OK
 node scripts/notify-check.js                # NOTIFY_CHECK_OK
 node scripts/threadnotify-check.js          # THREADNOTIFY_CHECK_OK (every involved-thread reply sounds while focused)
+node scripts/timestamps-check.js            # TIMESTAMPS_CHECK_OK (relative message times, hover, live tick)
 node scripts/archive-check.js               # ARCHIVE_CHECK_OK
 node scripts/emoji-check.js                 # EMOJI_CHECK_OK
 node scripts/theme-check.js                 # THEME_CHECK_OK

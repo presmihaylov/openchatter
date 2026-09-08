@@ -290,15 +290,42 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const fmtLastReply = (iso) => {
+  const fmtMessageTime = (iso, now = new Date()) => {
     const d = new Date(iso);
-    const now = new Date();
-    const day = (x) => x.toDateString();
-    if (day(d) === day(now)) return 'today at ' + fmtTime(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const elapsed = Math.max(0, now.getTime() - d.getTime());
+    if (elapsed < 60 * 1000) return 'just now';
+    if (elapsed < 60 * 60 * 1000) {
+      const n = Math.floor(elapsed / (60 * 1000));
+      return `${n} minute${n === 1 ? '' : 's'} ago`;
+    }
+    if (elapsed < 24 * 60 * 60 * 1000) {
+      const n = Math.floor(elapsed / (60 * 60 * 1000));
+      return `${n} hour${n === 1 ? '' : 's'} ago`;
+    }
     const yd = new Date(now); yd.setDate(now.getDate() - 1);
-    if (day(d) === day(yd)) return 'yesterday at ' + fmtTime(iso);
-    return 'on ' + d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    if (d.toDateString() === yd.toDateString()) return 'Yesterday at ' + fmtTime(iso);
+    const date = d.toLocaleDateString([], {
+      month: 'short', day: 'numeric', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+    });
+    return date + ' at ' + fmtTime(iso);
   };
+
+  const fmtExactMessageTime = (iso) => new Date(iso).toLocaleString([], {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
+  });
+
+  const messageTimeHTML = (iso, className) => `<time class="${className} message-time" datetime="${esc(iso)}" title="${esc(fmtExactMessageTime(iso))}">${esc(fmtMessageTime(iso))}</time>`;
+
+  // Relative labels age in place. This touches only the rendered <time>
+  // elements: no channel, thread or search request is made on a clock tick.
+  const refreshMessageTimes = () => document.querySelectorAll('time.message-time[datetime]').forEach((el) => {
+    const iso = el.getAttribute('datetime');
+    el.textContent = fmtMessageTime(iso);
+    el.title = fmtExactMessageTime(iso);
+  });
+  setInterval(refreshMessageTimes, 30000);
 
   // calendar day in the viewer's local time; the key the date dividers split on
   const dayOf = (iso) => new Date(iso).toDateString();
@@ -604,7 +631,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       el.className = 'msg system-entry';
       el.dataset.id = m.id;
       el.dataset.at = m.created_at;
-      el.innerHTML = `<span class="sys-text"><span class="sys-name">${esc(m.author_name)}</span> ${esc(m.body)}</span><span class="sys-time">${fmtTime(m.created_at)}</span>`;
+      el.innerHTML = `<span class="sys-text"><span class="sys-name">${esc(m.author_name)}</span> ${esc(m.body)}</span>${messageTimeHTML(m.created_at, 'sys-time')}`;
       attachMsgMenu(el, m);
       return el;
     }
@@ -640,7 +667,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         <div class="meta"><span class="author">${esc(m.author_name)}</span>${(() => {
           const a = participants.find((x) => x.id === m.author_id);
           return a && a.owner_name ? `<span class="owner-badge" title="server-verified owner">${esc(a.owner_name)}'s agent</span>` : '';
-        })()}<span class="time">${fmtTime(m.created_at)}</span>
+        })()}${messageTimeHTML(m.created_at, 'time')}
           ${m.edited_at ? '<span class="edited"> (edited)</span>' : ''}
           ${m.is_broadcast ? ' <span class="bcast" title="broadcast">' + ICON.megaphone + '</span>' : ''}<span class="msg-ack"></span></div>
         <div class="content">${renderMarkdown(m.body)}</div>
@@ -666,7 +693,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       count.textContent = `${m.reply_count} repl${m.reply_count === 1 ? 'y' : 'ies'}`;
       const last = document.createElement('span');
       last.className = 'rb-last';
-      if (m.last_reply_at) last.textContent = 'Last reply ' + fmtLastReply(m.last_reply_at);
+      if (m.last_reply_at) last.innerHTML = 'Last reply ' + messageTimeHTML(m.last_reply_at, 'rb-time');
       bar.append(avs, count, last);
       const th = threads.find((x) => x.root_id === m.id);
       if (th && th.unread_count > 0 && !th.muted) bar.classList.add('unread');
@@ -3430,8 +3457,6 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const s = String(body).replace(/\s+/g, ' ').trim();
     return s.length > 180 ? s.slice(0, 180) + '…' : s;
   };
-  const fmtSearchTime = (iso) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + fmtTime(iso);
-
   // a result reads like a message row: avatar, name, time, channel, snippet
   const searchHitRow = (r) => {
     const ch = channels.find((c) => c.id === r.channel_id);
@@ -3445,7 +3470,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const meta = document.createElement('div');
     meta.className = 'sh-meta';
     meta.innerHTML = `<span class="sh-author">${esc(r.author_name)}</span>` +
-      `<span class="sh-time">${esc(fmtSearchTime(r.created_at))}</span>` +
+      messageTimeHTML(r.created_at, 'sh-time') +
       `<span class="sh-channel">#${esc(ch ? ch.name : 'channel')}</span>` +
       (r.thread_root_id ? '<span class="sh-thread">in thread</span>' : '') +
       (r.via === 'semantic' ? '<span class="sh-via" title="matched by meaning, not by these words">semantic</span>' : '');

@@ -47,7 +47,7 @@ async function api(path, opts = {}) {
   if (bar.avatarBorder !== '0px') throw new Error('replier avatars must have no border, got ' + bar.avatarBorder);
   if (bar.avatars < 1) throw new Error('no replier avatars: ' + JSON.stringify(bar));
   if (bar.count !== '2 replies') throw new Error('count wrong: ' + JSON.stringify(bar));
-  if (!/^Last reply today at /.test(bar.last)) throw new Error('last-reply text wrong: ' + JSON.stringify(bar));
+  if (bar.last !== 'Last reply just now') throw new Error('last-reply text wrong: ' + JSON.stringify(bar));
 
   // clicking the bar opens the thread and sets the /t/ segment
   await page.click('button.reply-bar');

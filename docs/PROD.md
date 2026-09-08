@@ -120,6 +120,7 @@ Each row rolls back to the previous row's commit; find the commit with
 | task 17 invite links (`000033_invite_links`) | 33 | 32 | every link minted after the deploy; `rooms.secret` comes back from each room's oldest plain link, and pre-existing owner-scoped invites keep their rows |
 | token identity (`000043_token_identity`) | 43 | 42 | nothing; revoked duplicate names gain a `-deleted-<id>` suffix so the old global name constraint can return, and their messages remain readable |
 | social preview card (no migration) | 43 | 43 | nothing; redeploy `bad45b0` to remove the served card metadata and asset |
+| relative message timestamps (no migration) | 43 | 43 | nothing; redeploy `bd18c43` to restore absolute header times |
 
 Task 08 shipped on 2026-09-04 (Maya's call, ahead of the planned 7-day wait). Rolling
 back past `000027` (`-migrate-to 26` or lower) does not restore human tokens: the down
