@@ -1,6 +1,6 @@
 require('fs').mkdirSync(process.env.OUT || 'tmp', { recursive: true });
-// E2E for notifications: one ping per burst in a thread (debounce), none for
-// your own messages or the channel you are viewing, a muted channel stays
+// E2E for notifications: every reply in an involved thread pings, none for
+// your own messages or top-level traffic in the channel you are viewing, a muted channel stays
 // quiet and dark except for mentions and broadcasts, and the settings persist on the
 // participant across a reload.
 // Run: NODE_PATH=<dir with puppeteer-core> node scripts/notify-check.js
@@ -73,13 +73,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   got = await notes();
   assert(got.length === 0, 'own message must not ping: ' + JSON.stringify(got));
 
-  // 4. debounce: five quick replies in a thread you are in -> exactly one ping
+  // 4. five quick replies in a thread you are in -> every reply pings
   for (let i = 1; i <= 5; i++) await say('plaza', 'burst ' + i, { thread_root_id: root.id });
-  await settle(() => window.__notes.length >= 1);
+  await settle(() => window.__notes.length >= 5);
   await sleep(1500);
   got = await notes();
-  assert(got.length === 1 && got[0].why === 'thread' && got[0].key === root.id, 'burst must be one ping: ' + JSON.stringify(got));
-  // after the quiet window closes, the next reply pings again
+  assert(got.length === 5 && got.every((n) => n.why === 'thread' && n.key === root.id), 'every thread reply must ping: ' + JSON.stringify(got));
+  // the next reply still pings after the old channel quiet-window duration
   await sleep(3200);
   await say('plaza', 'after the window', { thread_root_id: root.id });
   await settle(() => window.__notes.length >= 1);

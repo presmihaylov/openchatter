@@ -2061,62 +2061,90 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // What notifies follows the agents' relevance rules: a top-level message in a
   // channel you are in, a reply in a thread you are part of, and always a
   // mention or broadcast, even in a muted channel. Nothing for your own
-  // messages, nothing while you are looking at the channel it landed in.
+  // messages. A reply in one of your threads is deliberately exempt from the
+  // focused-channel guard: seeing the parent channel is not seeing its thread.
+  const involvedThread = (m) => {
+    if (!m.thread_root_id) return null;
+    const known = threads.find((t) => t.root_id === m.thread_root_id);
+    if (known) return known;
+    // The event carries the server's live participant set. This closes the
+    // small gap before a newly-mentioned thread has reached the sidebar list.
+    return (m.thread_participants || []).includes(me.name) ? { muted: false } : null;
+  };
   const notifyReason = (m) => {
     if (!notifyPrefs.enabled || !me) return null;
     if (m.author_id === me.id || m.kind === 'system') return null;
     if (roomMuted()) return null; // the whole-workspace mute (task 18)
     const ch = channels.find((c) => c.id === m.channel_id);
     if (!ch) return null;
-    if (!document.hidden && document.hasFocus() && current && current.id === ch.id) return null;
+    const th = involvedThread(m);
+    if (!th && !document.hidden && document.hasFocus() && current && current.id === ch.id) return null;
     if ((m.mentions || []).includes(me.name)) return 'mention';
     if (m.is_broadcast) return 'broadcast';
     if (ch.muted) return null;
     if (!m.thread_root_id) return 'channel';
-    const th = threads.find((t) => t.root_id === m.thread_root_id);
     if (!th || th.muted) return null;
     return 'thread';
   };
 
-  // Per thread (or per channel for top-level posts), the first message pings
-  // and opens a quiet window; every further message inside it extends the
-  // window and stays silent. A busy agent thread is one ping, not a drum roll.
+  // Top-level channel traffic keeps its quiet window. Replies in a thread the
+  // viewer is part of sound individually: every reply is actionable even when
+  // several arrive together.
   const NOTIFY_WINDOW_MS = 3000;
   const notifyTimers = new Map();
   let audioCtx = null;
-  // browsers only let audio start after a gesture, so grab a context on the first one
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  // Browsers only let audio start after a gesture. Create and resume the
+  // context inside that gesture, rather than waiting for the first live event.
   const primeAudio = () => {
-    if (audioCtx || !window.AudioContext) return;
-    try { audioCtx = new AudioContext(); } catch { /* no audio here */ }
+    if (!AudioContextClass) return;
+    try {
+      if (!audioCtx) audioCtx = new AudioContextClass();
+      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    } catch { /* no audio here */ }
   };
   document.addEventListener('pointerdown', primeAudio);
   document.addEventListener('keydown', primeAudio);
-  const playPing = () => {
-    if (!audioCtx) return;
-    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-    const t = audioCtx.currentTime;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, t);
-    osc.frequency.setValueAtTime(1175, t + 0.09);
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
-    osc.connect(gain).connect(audioCtx.destination);
-    osc.start(t);
-    osc.stop(t + 0.3);
+  const playPing = async () => {
+    if (!audioCtx) return false;
+    try {
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      if (audioCtx.state !== 'running') return false;
+      const t = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.setValueAtTime(1175, t + 0.09);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.3);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   // a reply in a thread the sidebar does not know yet may still be one you are
   // in (joined from another device, mentioned a moment ago): look once
   const threadChecked = new Map();
+  const threadLoads = new Map();
   const ensureThreadKnown = async (rootID) => {
     if (threads.some((t) => t.root_id === rootID)) return;
+    const pending = threadLoads.get(rootID);
+    if (pending) {
+      await pending;
+      return;
+    }
     const last = threadChecked.get(rootID) || 0;
     if (Date.now() - last < 10000) return;
     threadChecked.set(rootID, Date.now());
-    await loadThreads();
+    const load = loadThreads().finally(() => threadLoads.delete(rootID));
+    threadLoads.set(rootID, load);
+    await load;
   };
 
   const maybeNotify = async (m) => {
@@ -2124,13 +2152,16 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const why = notifyReason(m);
     if (!why) return;
     const key = m.thread_root_id || m.channel_id;
-    const inWindow = notifyTimers.has(key);
-    if (inWindow) clearTimeout(notifyTimers.get(key));
-    notifyTimers.set(key, setTimeout(() => notifyTimers.delete(key), NOTIFY_WINDOW_MS));
-    if (inWindow) return;
+    const everyReply = !!involvedThread(m);
+    if (!everyReply) {
+      const inWindow = notifyTimers.has(key);
+      if (inWindow) clearTimeout(notifyTimers.get(key));
+      notifyTimers.set(key, setTimeout(() => notifyTimers.delete(key), NOTIFY_WINDOW_MS));
+      if (inWindow) return;
+    }
     const ch = channels.find((c) => c.id === m.channel_id);
     const sound = !!notifyPrefs.sound;
-    if (sound) playPing();
+    const soundPlayed = sound ? await playPing() : false;
     if (window.Notification && Notification.permission === 'granted' && (document.hidden || !document.hasFocus())) {
       try {
         const n = new Notification(`${m.author_name || 'Someone'} in #${ch ? ch.name : 'channel'}`, {
@@ -2144,7 +2175,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       } catch { /* the in-tab badge and sound already happened */ }
     }
     // e2e hook: the observable side of a notification
-    document.dispatchEvent(new CustomEvent('agentchat:notify', { detail: { key, why, sound, channel: ch ? ch.name : '' } }));
+    document.dispatchEvent(new CustomEvent('agentchat:notify', {
+      detail: { key, why, sound, soundPlayed, audioState: audioCtx ? audioCtx.state : '', channel: ch ? ch.name : '' },
+    }));
   };
 
   // the notification, archive and theme controls live on /settings (auth.js);
