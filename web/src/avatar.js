@@ -1,6 +1,14 @@
 /* Participant avatar image lifecycle, shared by room and account views. */
 
 const loadedSources = new Set();
+const LOADED_SOURCE_LIMIT = 256;
+const rememberLoaded = (url) => {
+  // This is only a paint hint, not an asset cache. Keep it finite across a
+  // long session with many avatar revisions and attachment object URLs.
+  loadedSources.delete(url);
+  loadedSources.add(url);
+  while (loadedSources.size > LOADED_SOURCE_LIMIT) loadedSources.delete(loadedSources.values().next().value);
+};
 
 export const avatarImage = (cls, name, source) => {
   const img = document.createElement('img');
@@ -13,7 +21,7 @@ export const avatarImage = (cls, name, source) => {
   const loaded = () => {
     if (settled) return;
     settled = true;
-    if (img.src) loadedSources.add(img.src);
+    if (img.src) rememberLoaded(img.src);
     img.classList.remove('avatar-loading', 'avatar-error');
     img.dataset.avatarState = 'loaded';
     img.alt = name || '';

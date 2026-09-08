@@ -654,14 +654,30 @@ const personalWorkspaceBits = async (slug, roomName) => {
   try { me = await wsApi(slug, '/api/v1/me'); } catch (e) { return; }
   $('avatar-section').classList.remove('hidden');
   $('avatar-ws-name').textContent = roomName;
+  let avatarPaintSeq = 0;
+  let avatarObjectURL = null;
+  const releaseAvatarURL = () => {
+    if (!avatarObjectURL) return;
+    URL.revokeObjectURL(avatarObjectURL);
+    avatarObjectURL = null;
+  };
   const paintAvatar = () => {
+    const seq = ++avatarPaintSeq;
+    releaseAvatarURL();
     const slot = $('settings-avatar');
-    slot.innerHTML = '';
+    slot.replaceChildren();
     $('avatar-remove').classList.toggle('hidden', !me.avatar_attachment_id);
     const source = me.avatar_attachment_id
       ? fetch('/api/v1/attachments/' + me.avatar_attachment_id + '?size=512', { headers: { 'Authorization': 'Bearer ' + sessionToken(), 'X-Workspace-Slug': slug } })
         .then((resp) => (resp.ok ? resp.blob() : Promise.reject(new Error('image fetch failed'))))
-        .then((blob) => URL.createObjectURL(blob))
+        .then((blob) => {
+          const url = URL.createObjectURL(blob);
+          // An upload/remove may have repainted while this protected image was
+          // in flight. Never retain or hand a detached paint its late URL.
+          if (seq !== avatarPaintSeq) { URL.revokeObjectURL(url); return null; }
+          avatarObjectURL = url;
+          return url;
+        })
       : '/brand/avatar-default-512.png';
     slot.appendChild(avatarImage('avatar-lg', me.name, source));
   };
