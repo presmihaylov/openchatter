@@ -3799,9 +3799,17 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     b.title = label;
     return b;
   };
+  let inviteRenderSeq = 0;
   const renderInvites = async () => {
+    const seq = ++inviteRenderSeq;
+    const workspace = slug;
     let out;
-    try { out = await api('/api/v1/invites'); } catch (e) { showInviteErr(e.message); return; }
+    try { out = await api('/api/v1/invites', { ws: workspace }); }
+    catch (e) {
+      if (seq === inviteRenderSeq && workspace === slug) showInviteErr(e.message);
+      return false;
+    }
+    if (seq !== inviteRenderSeq || workspace !== slug || $('invite-modal').classList.contains('hidden')) return false;
     const list = $('invite-list');
     list.replaceChildren();
     const invites = (out.invites || []).slice().sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
@@ -3838,21 +3846,26 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const revoke = iconBtn('invite-revoke', ICON.trashTwo, 'Revoke');
       revoke.onclick = async () => {
         if (!confirm('Revoke this link? Anyone holding it can no longer join.')) return;
-        try { await api('/api/v1/invites/' + encodeURIComponent(v.id), { method: 'DELETE' }); } catch (e) { showInviteErr(e.message); return; }
-        await renderInvites();
+        try { await api('/api/v1/invites/' + encodeURIComponent(v.id), { method: 'DELETE', ws: workspace }); }
+        catch (e) { if (workspace === slug) showInviteErr(e.message); return; }
+        if (workspace === slug && !$('invite-modal').classList.contains('hidden')) await renderInvites();
       };
       actions.append(copy, revoke);
       li.append(token, info, actions);
       list.appendChild(li);
     }
+    return true;
   };
   const openInviteModal = async () => {
     showInviteErr('');
     $('invite-modal').classList.remove('hidden');
-    await renderInvites();
-    $('invite-new-submit').focus();
+    if (await renderInvites()) $('invite-new-submit').focus();
   };
-  const closeInviteModal = () => { $('invite-modal').classList.add('hidden'); $('ws-switcher').focus(); };
+  const closeInviteModal = () => {
+    inviteRenderSeq++;
+    $('invite-modal').classList.add('hidden');
+    $('ws-switcher').focus();
+  };
   $('invite-close').onclick = closeInviteModal;
   $('invite-modal').onclick = (ev) => { if (ev.target === $('invite-modal')) closeInviteModal(); };
   document.addEventListener('keydown', (ev) => {
@@ -3860,16 +3873,18 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   });
   $('invite-new').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    const workspace = slug;
     showInviteErr('');
     $('invite-new-submit').disabled = true;
     try {
       const body = { expires_in_seconds: Number($('invite-expiry').value) };
-      const out = await api('/api/v1/invites', { method: 'POST', body });
+      const out = await api('/api/v1/invites', { method: 'POST', body, ws: workspace });
+      if (workspace !== slug || $('invite-modal').classList.contains('hidden')) return;
       await renderInvites();
       const row = $('invite-list').querySelector(`[data-id="${out.invite.id}"]`);
       if (row) { row.scrollIntoView({ block: 'nearest' }); row.querySelector('.invite-copy').focus(); }
-    } catch (e) { showInviteErr(e.message); }
-    $('invite-new-submit').disabled = false;
+    } catch (e) { if (workspace === slug) showInviteErr(e.message); }
+    finally { $('invite-new-submit').disabled = false; }
   });
 
   // "Add an agent": mint a link bound to you and show it with the setup text.
