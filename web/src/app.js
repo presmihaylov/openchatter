@@ -70,7 +70,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   const pageFor = (e, chID) => e.pages.get(chID) || null;
   const setPage = (e, chID, list) => {
-    const page = { list: list.slice(-PAGE_LIMIT), openedAt: Date.now(), replies: new Set(), revision: 0 };
+    const page = { list: list.slice(-PAGE_LIMIT), openedAt: Date.now(), replies: new Set(), revision: 0, loading: false };
     e.pages.set(chID, page);
     return page;
   };
@@ -87,7 +87,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       // "N replies" line the DOM patch had already put there
       if (m.thread_root_id) {
         const root = page.list.find((x) => x.id === m.thread_root_id);
-        if (!root) return true;
+        if (!root) { if (page.loading) page.revision++; return true; }
         if (page.replies.has(m.id)) return false; // a replayed event must not count twice
         // the fetch that filled this page already counted every reply up to the
         // root's last_reply_at, and the feed cursors predate that fetch: without
@@ -114,13 +114,14 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       if (page) {
         const i = page.list.findIndex((x) => x.id === m.id);
         if (i >= 0) { page.list[i] = m; page.revision++; }
+        else if (page.loading) page.revision++;
       }
       return true;
     }
     if (t === 'message.deleted') {
       const rootID = ev.payload.thread_root_id;
       for (const page of e.pages.values()) {
-        let changed = page.replies.delete(ev.payload.message_id);
+        let changed = page.loading || page.replies.delete(ev.payload.message_id);
         const i = page.list.findIndex((x) => x.id === ev.payload.message_id);
         if (i >= 0) { page.list.splice(i, 1); changed = true; }
         // a deleted reply is not on the page, but it still leaves its root's
@@ -138,12 +139,14 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       for (const page of e.pages.values()) {
         const m = page.list.find((x) => x.id === ev.payload.message_id);
         if (m) { m.reactions = ev.payload.reactions || []; page.revision++; }
+        else if (page.loading) page.revision++;
       }
     }
     if (t === 'message.ack') {
       for (const page of e.pages.values()) {
         const m = page.list.find((x) => x.id === ev.payload.message_id);
         if (m) { m.acked_by = ev.payload.acked_by || []; page.revision++; }
+        else if (page.loading) page.revision++;
       }
     }
     return true;
@@ -1782,10 +1785,36 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     renderChannels();
     let page = pageFor(e, ch.id);
     const cached = !!page;
+    let needsReconcile = false;
     if (!cached) {
-      const out = await api(`/api/v1/channels/${ch.id}/messages?limit=100`);
-      if (!current || current.id !== ch.id || e !== active()) return; // stale response, a newer click won
-      page = setPage(e, ch.id, out.messages || []);
+      // Clear the previous channel immediately. The empty loading page is also
+      // where live events land while the first snapshot is in flight.
+      page = setPage(e, ch.id, []);
+      page.loading = true;
+      renderMessages(page.list, ch);
+      const startedPage = page;
+      const startedRevision = page.revision;
+      let out;
+      try {
+        out = await api(`/api/v1/channels/${ch.id}/messages?limit=100`);
+      } catch (err) {
+        if (pageFor(e, ch.id) === startedPage) {
+          startedPage.loading = false;
+          if (startedPage.revision === 0) e.pages.delete(ch.id);
+        }
+        throw err;
+      }
+      const latestPage = pageFor(e, ch.id);
+      if (latestPage === startedPage && latestPage.revision === startedRevision) {
+        page = setPage(e, ch.id, out.messages || []);
+      } else {
+        // The response predates a live event (or a newer fetch). Keep that
+        // page authoritative and let the guarded reconciliation fill history.
+        page = latestPage;
+        if (page) page.loading = false;
+        needsReconcile = true;
+      }
+      if (!current || current.id !== ch.id || e !== active()) return; // a newer click won
     }
     page.openedAt = Date.now();
     renderMessages(page.list, ch);
@@ -1796,7 +1825,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       markRead(ch);
       loadThreads();
       refreshHeaderMembers(ch);
-      if (cached) reconcilePage(e, ch);
+      if (cached || needsReconcile) reconcilePage(e, ch);
     });
   };
 
