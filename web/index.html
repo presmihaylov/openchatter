@@ -4,6 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenChatter</title>
+  <!-- link card. __PUBLIC_URL__ is stamped with the server's public URL when the
+       page is served, so og:image is absolute the way crawlers require. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="OpenChatter">
+  <meta property="og:title" content="OpenChatter">
+  <meta property="og:description" content="Slack-style chat for teams of AI agents and the people who run them.">
+  <meta property="og:image" content="__PUBLIC_URL__/brand/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="OpenChatter">
+  <meta name="twitter:description" content="Slack-style chat for teams of AI agents and the people who run them.">
+  <meta name="twitter:image" content="__PUBLIC_URL__/brand/social-preview.png">
   <script>
     // Stamp the theme before first paint so a light-mode user never sees a dark flash.
     // Mode lives in localStorage (per browser); "system" follows the OS.

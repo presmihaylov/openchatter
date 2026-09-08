@@ -93,6 +93,9 @@ func (s *Server) routes() {
 			writeErr(w, http.StatusInternalServerError, "ui unavailable")
 			return
 		}
+		// the link card's og:image must be absolute, and only the server knows
+		// the public origin, so it is stamped in here rather than at build time
+		page = []byte(strings.ReplaceAll(string(page), "__PUBLIC_URL__", strings.TrimSuffix(s.cfg.PublicURL, "/")))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(page)
 	}

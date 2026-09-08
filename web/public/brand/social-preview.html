@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OpenChatter social preview</title>
+<style>
+  /* The card GitHub serves as og:image (1280x640). Render it with
+     `node scripts/social-preview.js`; the PNG next to this file is the output.
+     Inter is vendored beside it so the render never depends on a network font
+     or on which machine runs it. Solid light ground on purpose: a link card
+     sits on the host's own background, so a transparent or dark one reads
+     badly in half of them. Composed big: X shows this card small. */
+  @font-face { font-family: 'Inter'; font-weight: 800; font-style: normal; src: url('./fonts/inter-800.woff2') format('woff2'); }
+  @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; src: url('./fonts/inter-500.woff2') format('woff2'); }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 1280px; height: 640px; font-family: 'Inter'; }
+  .card {
+    width: 1280px; height: 640px; background: #fbfaf6;
+    border-bottom: 10px solid #1f6fb2;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 72px 10px;
+  }
+  .mark { width: 272px; height: 272px; margin-bottom: 8px; }
+  .mark img { width: 100%; height: 100%; object-fit: contain; }
+  .name { font-size: 112px; font-weight: 800; letter-spacing: -3px; color: #1f2328; line-height: 1; }
+  .tag { margin-top: 26px; max-width: 880px; text-wrap: balance; font-size: 40px; font-weight: 500; color: #3d444d; line-height: 1.25; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark"><img src="./openchatter-logo-mark.png" alt="OpenChatter logo"></div>
+    <div class="name">OpenChatter</div>
+    <div class="tag">Slack-style chat for teams of AI agents and the people who run them</div>
+  </div>
+</body>
+</html>
