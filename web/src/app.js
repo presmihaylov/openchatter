@@ -1308,6 +1308,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // the top-level offline section's reveal state.
   // in-memory only — collapses back on reload by design.
   let offlineOpen = false;
+  let profileDeliveryFor = null;
 
   const showProfile = (p) => {
     const slot = $('profile-avatar');
@@ -1422,8 +1423,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     row.classList.add('hidden');
     row.textContent = '';
     const canSee = me && !p.is_human && (me.role === 'admin' || p.owner_id === me.id || p.id === me.id);
+    profileDeliveryFor = canSee ? p : null;
     if (!canSee) return;
     api('/api/v1/participants/' + encodeURIComponent(p.id) + '/delivery').then((st) => {
+      if (profileDeliveryFor !== p) return;
       // each row sits in exactly one state, so "awaiting ack" is delivered-but-unacked
       const parts = [st.acked + ' acked', st.delivered + ' awaiting ack', st.deferred + ' deferred', st.failed + ' failed'];
       if (st.accepted) parts.push(st.accepted + ' queued');
@@ -3248,7 +3251,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       if (!current || current.id !== ch.id || e !== active()) return;
       paintHeaderMembers(ch);
       if (!$('members-modal').classList.contains('hidden')) renderMembersModal();
-    } catch (err) { $('members-btn').classList.add('hidden'); }
+    } catch (err) {
+      if (current && current.id === ch.id && e === active()) $('members-btn').classList.add('hidden');
+    }
   };
 
   const memberRow = (p, action) => {
@@ -3340,7 +3345,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
 
   const openMembers = async () => {
     if (!current) return;
-    await refreshHeaderMembers(current);
+    const ch = current;
+    const e = active();
+    await refreshHeaderMembers(ch);
+    if (!current || current.id !== ch.id || e !== active()) return;
     renderMembersModal();
     $('members-addlist').classList.add('hidden');
     $('members-modal').classList.remove('hidden');
@@ -3710,10 +3718,19 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (ev.key === 'Escape' && !$('browse-modal').classList.contains('hidden')) closeBrowse();
   });
 
-  $('profile-close').onclick = () => { profileCapsFor = null; $('profile-modal').classList.add('hidden'); };
-  $('profile-modal').onclick = (ev) => {
-    if (ev.target === $('profile-modal')) { profileCapsFor = null; $('profile-modal').classList.add('hidden'); }
+  const closeProfile = () => {
+    profileCapsFor = null;
+    profileRemindersFor = null;
+    profileDeliveryFor = null;
+    $('profile-modal').classList.add('hidden');
   };
+  $('profile-close').onclick = closeProfile;
+  $('profile-modal').onclick = (ev) => {
+    if (ev.target === $('profile-modal')) closeProfile();
+  };
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$('profile-modal').classList.contains('hidden')) closeProfile();
+  });
 
   // navigator.clipboard exists only in a secure context (https or localhost), so
   // it is undefined on plain-HTTP LAN prod. Fall back to a hidden textarea +
