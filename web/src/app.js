@@ -55,7 +55,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       e = { slug: s, warm: false, warming: null, me: null, room: null, joinURL: null, isAdmin: false,
         channels: [], groups: [], ungrouped: [], defaultCollapsed: false,
         participants: [], publicChannels: [], threads: [],
-        pages: new Map(), members: new Map(), lastChannelID: null, refreshTimer: 0, pending: [] };
+        pages: new Map(), members: new Map(), lastChannelID: null, refreshTimer: 0,
+        threadLoadSeq: 0, pending: [] };
       store.set(s, e);
     }
     return e;
@@ -69,7 +70,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   const pageFor = (e, chID) => e.pages.get(chID) || null;
   const setPage = (e, chID, list) => {
-    const page = { list: list.slice(-PAGE_LIMIT), openedAt: Date.now(), replies: new Set() };
+    const page = { list: list.slice(-PAGE_LIMIT), openedAt: Date.now(), replies: new Set(), revision: 0 };
     e.pages.set(chID, page);
     return page;
   };
@@ -98,30 +99,36 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         if (!(root.replier_ids || []).includes(m.author_id)) {
           root.replier_ids = (root.replier_ids || []).concat(m.author_id);
         }
+        page.revision++;
         return true;
       }
       if (page.list.some((x) => x.id === m.id)) return false;
       page.list.push(m);
       if (page.list.length > PAGE_LIMIT) page.list.splice(0, page.list.length - PAGE_LIMIT);
+      page.revision++;
       return true;
     }
     if (t === 'message.edited') {
       const m = ev.payload;
       const page = pageFor(e, m.channel_id);
-      if (page) { const i = page.list.findIndex((x) => x.id === m.id); if (i >= 0) page.list[i] = m; }
+      if (page) {
+        const i = page.list.findIndex((x) => x.id === m.id);
+        if (i >= 0) { page.list[i] = m; page.revision++; }
+      }
       return true;
     }
     if (t === 'message.deleted') {
       const rootID = ev.payload.thread_root_id;
       for (const page of e.pages.values()) {
-        page.replies.delete(ev.payload.message_id);
+        let changed = page.replies.delete(ev.payload.message_id);
         const i = page.list.findIndex((x) => x.id === ev.payload.message_id);
-        if (i >= 0) page.list.splice(i, 1);
+        if (i >= 0) { page.list.splice(i, 1); changed = true; }
         // a deleted reply is not on the page, but it still leaves its root's
         // footer one too high; the exact last_reply_at only a refetch knows
         const root = rootID ? page.list.find((x) => x.id === rootID) : null;
-        if (root && root.reply_count) root.reply_count -= 1;
+        if (root && root.reply_count) { root.reply_count -= 1; changed = true; }
         if (root && !root.reply_count) root.last_reply_at = null;
+        if (changed) page.revision++;
       }
       return true;
     }
@@ -130,13 +137,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       // page would put the stale one back into reactionMap
       for (const page of e.pages.values()) {
         const m = page.list.find((x) => x.id === ev.payload.message_id);
-        if (m) m.reactions = ev.payload.reactions || [];
+        if (m) { m.reactions = ev.payload.reactions || []; page.revision++; }
       }
     }
     if (t === 'message.ack') {
       for (const page of e.pages.values()) {
         const m = page.list.find((x) => x.id === ev.payload.message_id);
-        if (m) m.acked_by = ev.payload.acked_by || [];
+        if (m) { m.acked_by = ev.payload.acked_by || []; page.revision++; }
       }
     }
     return true;
@@ -1812,15 +1819,34 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     });
     syncDateDividers(box);
     box.scrollTop = box.scrollHeight;
+    // Font/image layout may settle after this synchronous paint. A channel
+    // open is an explicit jump to latest, so finish that jump after layout too.
+    requestAnimationFrame(() => {
+      if (current && current.id === ch.id) box.scrollTop = box.scrollHeight;
+    });
   };
 
   // a cached page can have missed an event (a gap while it warmed): fetch the
-  // live page after the paint and repaint only when the two differ
+  // live page after the paint and repaint only when the two differ. The page's
+  // revision makes live events authoritative: an older snapshot may never
+  // replace a page that changed while its request was in flight.
   const reconcilePage = async (e, ch) => {
+    const startedPage = pageFor(e, ch.id);
+    if (!startedPage) return;
+    const startedRevision = startedPage.revision;
     try {
       const out = await api(`/api/v1/channels/${ch.id}/messages?limit=100`, { ws: e.slug });
       const live = out.messages || [];
       const page = pageFor(e, ch.id);
+      if (page !== startedPage || page.revision !== startedRevision) {
+        // A newer response or a live create/edit/delete/reaction/ack won this
+        // race. Reconcile once more after paint so a pre-existing cache gap is
+        // still repaired, but keep the newer page on screen in the meantime.
+        if (e === active() && current && current.id === ch.id) {
+          afterPaint(() => reconcilePage(e, channels.find((x) => x.id === ch.id) || ch));
+        }
+        return;
+      }
       // reply_count and last_reply_at are part of what a root paints: comparing
       // ids and bodies alone calls a stale footer "same" and skips the repaint
       const same = page && page.list.length === live.length
@@ -1873,10 +1899,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   let threads = [];
 
   // Room-wide: the whole thread tree, tagged with channel_id, so leaves can
-  // nest under their parent channel in the sidebar.
+  // nest under their parent channel in the sidebar. Several channel opens and
+  // reply events can overlap these snapshots; only the newest request may land.
   const loadThreads = async (e = active()) => {
+    const seq = ++e.threadLoadSeq;
     try {
       const out = await api('/api/v1/threads', { ws: e.slug });
+      if (seq !== e.threadLoadSeq) return;
       e.threads = out.threads || [];
       if (e !== active()) return;
       threads = e.threads;
