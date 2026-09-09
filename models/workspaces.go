@@ -260,10 +260,11 @@ type UserRoom struct {
 	// Unread, UnreadCount and Mentions roll up the channel badges of this
 	// user's participant: a muted channel counts only through its mentions,
 	// like the sidebar. Muted is the account-level workspace mute (task 18).
-	Unread      bool  `json:"unread"`
-	UnreadCount int64 `json:"unread_count"`
-	Mentions    int64 `json:"mentions"`
-	Muted       bool  `json:"muted"`
+	Unread         bool  `json:"unread"`
+	UnreadCount    int64 `json:"unread_count"`
+	Mentions       int64 `json:"mentions"`
+	DirectMentions int64 `json:"direct_mentions"`
+	Muted          bool  `json:"muted"`
 }
 
 // RoomsByUser lists the rooms the user still has a live row in, in the user's
@@ -291,6 +292,15 @@ func (s *Store) RoomsByUser(ctx context.Context, userID string) ([]UserRoom, err
 		          WHERE cm.participant_id = p.id
 		            AND (m.is_broadcast OR EXISTS (
 		                 SELECT 1 FROM mentions mn WHERE mn.message_id = m.id AND mn.participant_id = p.id))) AS mentions,
+		        (SELECT count(*) FROM channel_members cm
+		          JOIN channels c ON c.id = cm.channel_id AND NOT c.archived
+		          LEFT JOIN channel_reads rd ON rd.channel_id = c.id AND rd.participant_id = p.id
+		          JOIN messages m ON m.channel_id = c.id AND m.thread_root_id IS NULL
+		               AND m.author_id <> p.id AND m.kind <> 'system'
+		               AND m.created_at > COALESCE(rd.last_read_at, p.created_at)
+		          WHERE cm.participant_id = p.id
+		            AND EXISTS (SELECT 1 FROM mentions mn
+		                        WHERE mn.message_id = m.id AND mn.participant_id = p.id)) AS direct_mentions,
 		        COALESCE(pr.muted, false)
 		 FROM participants p JOIN rooms r ON r.id = p.room_id
 		 LEFT JOIN user_room_prefs pr ON pr.user_id = p.user_id AND pr.room_id = r.id
@@ -303,7 +313,7 @@ func (s *Store) RoomsByUser(ctx context.Context, userID string) ([]UserRoom, err
 	out := []UserRoom{}
 	for rows.Next() {
 		var ur UserRoom
-		if err := rows.Scan(&ur.ID, &ur.Slug, &ur.Name, &ur.Role, &ur.JoinedAt, &ur.AvatarAttachmentID, &ur.Color, &ur.UnreadCount, &ur.Mentions, &ur.Muted); err != nil {
+		if err := rows.Scan(&ur.ID, &ur.Slug, &ur.Name, &ur.Role, &ur.JoinedAt, &ur.AvatarAttachmentID, &ur.Color, &ur.UnreadCount, &ur.Mentions, &ur.DirectMentions, &ur.Muted); err != nil {
 			return nil, err
 		}
 		ur.Unread = ur.UnreadCount > 0

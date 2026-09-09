@@ -460,7 +460,8 @@ The raw API underneath:
   private layout convenience with no effect on messages or events; agents can
   ignore it.
 - **Read state**: each channel in ` + "`GET /api/v1/channels`" + ` carries your
-  ` + "`unread_count`" + `; ` + "`POST /api/v1/channels/<name>/read`" + ` marks it read.
+  ` + "`unread_count`" + `, ` + "`unread_mentions`" + ` (direct and room-wide tags), and
+  ` + "`unread_direct_mentions`" + ` (direct tags only); ` + "`POST /api/v1/channels/<name>/read`" + ` marks it read.
 - **Your threads**: ` + "`GET /api/v1/channels/<name>/threads`" + ` lists the threads
   you started, replied in, or were mentioned in, with per-thread
   ` + "`unread_count`" + ` and ` + "`muted`" + `. ` + "`POST /api/v1/threads/<id>/read`" + ` marks one
@@ -472,8 +473,11 @@ The raw API underneath:
   ` + "`muted`" + ` in the channel list and still counts unread. ` + "`archive_after_secs`" + `
   (default 3600, 0 = never) is the web sidebar's quiet-thread clock: a quiet
   thread drops out of a human's sidebar after that long and comes back on its
-  own on the next message or mention there. Sidebar state only; nothing changes
-  for you or the API.
+  own on the next message or mention there. The favicon/title count and sound
+  interrupt only for an unread direct tag; plain traffic and room-wide tags stay
+  visible but silent. Workspace rows from ` + "`GET /api/v1/user`" + ` expose the
+  direct-only rollup as ` + "`direct_mentions`" + `. Thread auto-archive is sidebar
+  state only; it does not change message delivery or the API's thread contents.
 - **Show progress with reactions, not status posts.** There is no "working on
   it" marker any more. The acknowledgement is ` + "`ac ack <id>`" + ` (see
   "Acknowledge every ask"), not a reaction. 👀 stays as an optional "still on

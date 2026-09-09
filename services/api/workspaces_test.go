@@ -641,47 +641,47 @@ func TestUserWorkspacesUnreadAndMentions(t *testing.T) {
 	annB := &testClient{t: t, base: srv.URL, token: ann.token, slug: roomB["slug"].(string)}
 	annB.must("POST", "/api/v1/workspaces/"+annB.slug+"/enter", map[string]any{"invite": roomB["invite"]}, 200)
 
-	state := func() (unread bool, mentions float64) {
+	state := func() (unread bool, mentions, direct float64) {
 		t.Helper()
 		for _, w := range ann.must("GET", "/api/v1/user", nil, 200)["workspaces"].([]any) {
 			ws := w.(map[string]any)
 			if ws["slug"] == annB.slug {
-				return ws["unread"].(bool), ws["mentions"].(float64)
+				return ws["unread"].(bool), ws["mentions"].(float64), ws["direct_mentions"].(float64)
 			}
 		}
 		t.Fatalf("room b missing from /user")
 		return
 	}
-	if u, m := state(); u || m != 0 {
-		t.Fatalf("fresh member: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); u || m != 0 || d != 0 {
+		t.Fatalf("fresh member: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 	// ann's own post is not unread for her
 	annB.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hello"}, 201)
-	if u, m := state(); u || m != 0 {
-		t.Fatalf("own post: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); u || m != 0 || d != 0 {
+		t.Fatalf("own post: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "plain news"}, 201)
-	if u, m := state(); !u || m != 0 {
-		t.Fatalf("after a plain post: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); !u || m != 0 || d != 0 {
+		t.Fatalf("after a plain post: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @annie look"}, 201)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel all hands"}, 201)
-	if u, m := state(); !u || m != 2 {
-		t.Fatalf("after a mention and a broadcast: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); !u || m != 2 || d != 1 {
+		t.Fatalf("after a mention and a broadcast: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 	annB.must("POST", "/api/v1/channels/general/read", nil, 200)
-	if u, m := state(); u || m != 0 {
-		t.Fatalf("after read: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); u || m != 0 || d != 0 {
+		t.Fatalf("after read: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 	// a muted channel only counts through its mentions, like the sidebar
 	annB.must("POST", "/api/v1/channels/general/mute", map[string]any{"muted": true}, 200)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "muted chatter"}, 201)
-	if u, m := state(); u || m != 0 {
-		t.Fatalf("muted plain post: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); u || m != 0 || d != 0 {
+		t.Fatalf("muted plain post: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@annie even muted"}, 201)
-	if u, m := state(); !u || m != 1 {
-		t.Fatalf("muted mention: unread=%v mentions=%v", u, m)
+	if u, m, d := state(); !u || m != 1 || d != 1 {
+		t.Fatalf("muted mention: unread=%v mentions=%v direct=%v", u, m, d)
 	}
 }
 
@@ -1003,10 +1003,10 @@ func TestWorkspaceOrderAndMute(t *testing.T) {
 		return nil
 	}
 	out = user.must("GET", "/api/v1/user", nil, 200)
-	if wa := find(out, a); wa["unread_count"] != 4.0 || wa["mentions"] != 1.0 || wa["unread"] != true || wa["muted"] != false {
+	if wa := find(out, a); wa["unread_count"] != 4.0 || wa["mentions"] != 1.0 || wa["direct_mentions"] != 1.0 || wa["unread"] != true || wa["muted"] != false {
 		t.Fatalf("room a badge: %v", wa)
 	}
-	if wb := find(out, b); wb["unread_count"] != 1.0 || wb["mentions"] != 0.0 {
+	if wb := find(out, b); wb["unread_count"] != 1.0 || wb["mentions"] != 0.0 || wb["direct_mentions"] != 0.0 {
 		t.Fatalf("room b badge: %v", wb)
 	}
 	if wc := find(out, c); wc["unread_count"] != 0.0 || wc["unread"] != false {

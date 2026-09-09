@@ -688,45 +688,45 @@ func TestUnreadCounts(t *testing.T) {
 	defer srv.Close()
 	_, alice, bob := setupRoom(t, srv.URL)
 
-	getUnread := func(c *testClient, name string) (float64, float64, bool) {
+	getUnread := func(c *testClient, name string) (float64, float64, float64, bool) {
 		out := c.must("GET", "/api/v1/channels", nil, 200)
 		for _, raw := range out["channels"].([]any) {
 			ch := raw.(map[string]any)
 			if ch["name"] == name {
 				_, hasMark := ch["last_read_at"]
-				return ch["unread_count"].(float64), ch["unread_mentions"].(float64), hasMark
+				return ch["unread_count"].(float64), ch["unread_mentions"].(float64), ch["unread_direct_mentions"].(float64), hasMark
 			}
 		}
 		t.Fatalf("channel %s not found", name)
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "one"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "two"}, 201)
 
 	// plain messages: unread but no mention
-	if n, m, _ := getUnread(bob, "general"); n != 2 || m != 0 {
-		t.Fatalf("bob unread=%v mentions=%v, want 2/0", n, m)
+	if n, m, d, _ := getUnread(bob, "general"); n != 2 || m != 0 || d != 0 {
+		t.Fatalf("bob unread=%v mentions=%v direct=%v, want 2/0/0", n, m, d)
 	}
 	// own messages never count as unread
-	if n, _, _ := getUnread(alice, "general"); n != 0 {
+	if n, _, _, _ := getUnread(alice, "general"); n != 0 {
 		t.Fatalf("alice unread = %v, want 0", n)
 	}
 
 	bob.must("POST", "/api/v1/channels/general/read", nil, 200)
-	if n, m, hasMark := getUnread(bob, "general"); n != 0 || m != 0 || !hasMark {
-		t.Fatalf("after read: unread=%v mentions=%v hasMark=%v, want 0/0/true", n, m, hasMark)
+	if n, m, d, hasMark := getUnread(bob, "general"); n != 0 || m != 0 || d != 0 || !hasMark {
+		t.Fatalf("after read: unread=%v mentions=%v direct=%v hasMark=%v, want 0/0/0/true", n, m, d, hasMark)
 	}
 
 	// a direct @mention and a @channel broadcast both count as mentions
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @bob"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel ping"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "nobody here"}, 201)
-	if n, m, _ := getUnread(bob, "general"); n != 3 || m != 2 {
-		t.Fatalf("after mentions: unread=%v mentions=%v, want 3/2", n, m)
+	if n, m, d, _ := getUnread(bob, "general"); n != 3 || m != 2 || d != 1 {
+		t.Fatalf("after mentions: unread=%v mentions=%v direct=%v, want 3/2/1", n, m, d)
 	}
 	// a mention aimed at alice is not a mention for bob
-	if _, m, _ := getUnread(alice, "general"); m != 0 {
+	if _, m, d, _ := getUnread(alice, "general"); m != 0 || d != 0 {
 		t.Fatalf("alice mentions=%v, want 0 (mentions were for bob/channel)", m)
 	}
 
@@ -736,7 +736,7 @@ func TestUnreadCounts(t *testing.T) {
 	msg := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "root"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages",
 		map[string]any{"body": "reply @bob", "thread_root_id": msg["id"]}, 201)
-	if n, m, _ := getUnread(bob, "general"); n != 1 || m != 0 {
+	if n, m, d, _ := getUnread(bob, "general"); n != 1 || m != 0 || d != 0 {
 		t.Fatalf("after root+reply: unread=%v mentions=%v, want 1/0 (thread replies don't count)", n, m)
 	}
 }
@@ -1557,6 +1557,9 @@ func TestSkillDoc(t *testing.T) {
 		"terminal state",
 		"Watch the channels you own",
 		"unread_count",
+		"unread_direct_mentions",
+		"direct_mentions",
+		"favicon/title count and sound",
 		"Drain the whole batch",
 		// task 03: room creation needs a login; agents ask their human
 		"## Creating a new room",

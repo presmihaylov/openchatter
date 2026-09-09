@@ -1,8 +1,8 @@
 require('fs').mkdirSync(process.env.OUT || 'tmp', { recursive: true });
-// E2E for notifications: every reply in an involved thread pings, none for
-// your own messages or top-level traffic in the channel you are viewing, a muted channel stays
-// quiet and dark except for mentions and broadcasts, and the settings persist on the
-// participant across a reload.
+// E2E for notifications: relevant traffic still raises a notification event,
+// but only a direct tag may request audio. Nothing fires for your own messages
+// or top-level traffic in the channel you are viewing; muted channels stay
+// quiet and dark except for tags, and settings persist across a reload.
 // Run: NODE_PATH=<dir with puppeteer-core> node scripts/notify-check.js
 const puppeteer = require('puppeteer-core');
 const { newRoom, openAsHuman, openSettings, backToRoom } = require('./lib/login.js');
@@ -61,7 +61,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const root = await say('plaza', 'root in plaza');
   await settle(() => window.__notes.length >= 1);
   let got = await notes();
-  assert(got.length === 1 && got[0].why === 'channel' && got[0].sound === true, 'plaza root: ' + JSON.stringify(got));
+  assert(got.length === 1 && got[0].why === 'channel' && got[0].sound === false, 'plaza root: ' + JSON.stringify(got));
 
   // 2. a post in the channel you are looking at: silent
   await say('general', 'you are watching this one');
@@ -80,13 +80,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await settle(() => window.__notes.length >= 5);
   await sleep(1500);
   got = await notes();
-  assert(got.length === 5 && got.every((n) => n.why === 'thread' && n.key === root.id), 'every thread reply must ping: ' + JSON.stringify(got));
+  assert(got.length === 5 && got.every((n) => n.why === 'thread' && n.key === root.id && n.sound === false), 'every thread reply must notify silently: ' + JSON.stringify(got));
   // the next reply still pings after the old channel quiet-window duration
   await sleep(3200);
   await say('plaza', 'after the window', { thread_root_id: root.id });
   await settle(() => window.__notes.length >= 1);
   got = await notes();
-  assert(got.length === 1 && got[0].key === root.id, 'post-window reply must ping once: ' + JSON.stringify(got));
+  assert(got.length === 1 && got[0].key === root.id && got[0].sound === false, 'post-window reply must notify silently once: ' + JSON.stringify(got));
 
   // 5. mute #plaza from the sidebar menu: channel traffic goes quiet, a mention does not
   const plazaLi = async () => page.evaluateHandle(() => [...document.querySelectorAll('#channel-list li')].find((li) => /plaza/.test(li.textContent)));
@@ -107,13 +107,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await say('plaza', 'hey @alice still here?');
   await settle(() => window.__notes.length >= 1);
   got = await notes();
-  assert(got.length === 1 && got[0].why === 'mention', 'mention in muted channel must ping: ' + JSON.stringify(got));
+  assert(got.length === 1 && got[0].why === 'mention' && got[0].sound === true, 'direct mention in muted channel must ping: ' + JSON.stringify(got));
   assert(await plazaGlows(), 'a mention must still glow a muted channel');
   await sleep(3200); // the mention opened plaza's quiet window; let it close
   await say('plaza', '@channel all hands');
   await settle(() => window.__notes.length >= 1);
   got = await notes();
-  assert(got.length === 1 && got[0].why === 'broadcast', 'broadcast in muted channel must ping: ' + JSON.stringify(got));
+  assert(got.length === 1 && got[0].why === 'broadcast' && got[0].sound === false, 'broadcast in muted channel must notify silently: ' + JSON.stringify(got));
 
   // 6. settings: sound off, then notifications off; both persist across a reload
   await openSettings(page, SERVER);

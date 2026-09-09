@@ -1,9 +1,9 @@
 // E2E for per-workspace badges in the rail (task 13, counts in task 18). A
 // belongs to two workspaces and sits in the first; B posts in the second.
 // After the focus refresh, A's rail shows a neutral "1" pill on the second
-// mark; an @mention turns it red; 100 unreads read "99+"; the tab title and
-// the favicon carry the total; opening the second workspace clears its badge
-// and it stays clear on the way back.
+// mark; a broadcast turns the rail red but leaves the tab quiet, while a direct
+// tag reaches the favicon/title. 100 plain unreads read "99+" only in the rail;
+// opening the second workspace clears its badge and it stays clear on return.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 OUT=<dir> node scripts/railbadge-check.js
 const fs = require('fs');
 const path = require('path');
@@ -28,11 +28,13 @@ const waitBadge = (page, slug, want) => page.waitForFunction((s, w) => {
 const errors = [];
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await puppeteer.launch({
-    executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  });
+  const browser = process.env.BROWSER_URL
+    ? await puppeteer.connect({ browserURL: process.env.BROWSER_URL })
+    : await puppeteer.launch({
+      executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    });
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -59,41 +61,50 @@ const errors = [];
 
   step = '2';
   // 2. a plain post from B: a neutral "1" pill on away after the focus refresh,
-  // the title and the favicon carry the total
+  // but the title and favicon remain clean because there was no direct tag
   await postAway('news from away');
   await refocus(page);
   await waitBadge(page, away.room.slug, 'count:1');
   const plain = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"] .rail-badge', (b) => { const c = getComputedStyle(b); return { bg: c.backgroundColor, text: b.textContent }; });
   assert(plain.bg !== 'rgb(237, 66, 69)', 'plain unread painted red: ' + JSON.stringify(plain));
-  await page.waitForFunction(() => document.title === '(1) OpenChatter | home base', { timeout: 4000 });
-  assert((await favicon()).startsWith('data:image/png'), 'favicon not drawn: ' + await favicon());
+  assert(await page.title() === 'OpenChatter | home base', 'plain unread changed title: ' + await page.title());
+  assert((await favicon()).startsWith('/brand/'), 'plain unread badged favicon: ' + await favicon());
   const labelPlain = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"]', (a) => a.getAttribute('aria-label'));
   assert(labelPlain === 'away team, 1 unread', 'aria-label: ' + labelPlain);
   await shot(page, 'dot.png');
 
   step = '3';
-  // 3. an @mention: the pill turns red and shows the mention count; the current mark stays clean
-  await postAway('hey @avabadge look at this');
+  // 3. a room-wide tag turns the rail red but does not interrupt the tab
+  await postAway('@channel all hands');
   await refocus(page);
   await waitBadge(page, away.room.slug, 'mention:1');
+  assert(await page.title() === 'OpenChatter | home base', 'broadcast changed title: ' + await page.title());
+  assert((await favicon()).startsWith('/brand/'), 'broadcast badged favicon: ' + await favicon());
+
+  // A direct tag adds the one favicon/title badge and the rail mention count.
+  await postAway('hey @avabadge look at this');
+  await refocus(page);
+  await waitBadge(page, away.room.slug, 'mention:2');
   assert((await badgeOf(page, home.room.slug)).hidden, 'home badged by away traffic');
   const label = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"]', (a) => a.getAttribute('aria-label'));
-  assert(label === 'away team, 1 mentions', 'aria-label: ' + label);
-  await page.waitForFunction(() => document.title === '(2) OpenChatter | home base', { timeout: 4000 });
+  assert(label === 'away team, 2 mentions', 'aria-label: ' + label);
+  await page.waitForFunction(() => document.title === '(1) OpenChatter | home base', { timeout: 4000 });
+  assert((await favicon()).startsWith('data:image/png'), 'direct mention did not badge favicon: ' + await favicon());
   // the count badge is the alert red with a white bold count (task 20, Maya msg 4561407a)
   const paint = await page.$eval('#rail-list .rail-item[href="/w/' + away.room.slug + '"] .rail-badge', (b) => { const c = getComputedStyle(b); return { bg: c.backgroundColor, fg: c.color, weight: c.fontWeight }; });
   assert(paint.bg === 'rgb(237, 66, 69)' && paint.fg === 'rgb(255, 255, 255)' && Number(paint.weight) >= 600, 'badge paint: ' + JSON.stringify(paint));
   await shot(page, 'mention.png');
 
   step = '3b';
-  // 3b. 100 plain unreads: the pill caps at 99+ (mentions still win the colour), the title does not cap
+  // 3b. A plain flood cannot change the direct-only tab count.
   for (let i = 0; i < 98; i++) await postAway('flood ' + i);
   await refocus(page);
-  await waitBadge(page, away.room.slug, 'mention:1');
-  await page.waitForFunction(() => document.title === '(100) OpenChatter | home base', { timeout: 8000 }).catch(async () => { throw new Error('title after flood: ' + await page.title() + ' badge ' + JSON.stringify(await badgeOf(page, away.room.slug))); });
+  await waitBadge(page, away.room.slug, 'mention:2');
+  assert(await page.title() === '(1) OpenChatter | home base', 'plain flood changed direct title: ' + await page.title());
   await postAway('@avabadge again');
   await refocus(page);
-  await waitBadge(page, away.room.slug, 'mention:2');
+  await waitBadge(page, away.room.slug, 'mention:3');
+  await page.waitForFunction(() => document.title === '(2) OpenChatter | home base', { timeout: 8000 });
   // read it as B would see a plain flood: a fresh account with no mention gets the neutral 99+
   const sessionC = await registerAndLogin(SERVER, uniqUser(), 'Cy Reader');
   await call(SERVER, '/api/v1/workspaces/' + away.room.slug + '/enter', { method: 'POST', token: sessionC, body: { invite: away.invite } });
@@ -105,7 +116,9 @@ const errors = [];
   await pageC.setViewport({ width: 1280, height: 800 });
   await openWorkspace(pageC, SERVER, sessionC, home.room.slug);
   await waitBadge(pageC, away.room.slug, 'count:99+');
-  await pageC.waitForFunction(() => document.title === '(100) OpenChatter | home base', { timeout: 8000 });
+  assert(await pageC.title() === 'OpenChatter | home base', 'plain flood badged fresh reader tab: ' + await pageC.title());
+  const faviconC = await pageC.$eval('link[rel="icon"]', (l) => l.getAttribute('href'));
+  assert(faviconC.startsWith('/brand/'), 'plain flood badged fresh reader favicon: ' + faviconC);
   await pageC.screenshot({ path: path.join(OUT, 'railbadge-99plus.png') });
   await ctxC.close();
 

@@ -190,7 +190,13 @@ func (s *Store) ListChannelsUnread(ctx context.Context, roomID, participantID st
 		           AND m.created_at > COALESCE(r.last_read_at, p.created_at)
 		           AND (m.is_broadcast OR EXISTS (
 		                SELECT 1 FROM mentions mn
-		                WHERE mn.message_id = m.id AND mn.participant_id = $2))) AS unread_mentions
+		                WHERE mn.message_id = m.id AND mn.participant_id = $2))) AS unread_mentions,
+		        (SELECT count(*) FROM messages m
+		         WHERE m.channel_id = c.id AND m.thread_root_id IS NULL
+		           AND m.author_id <> $2 AND m.kind <> 'system'
+		           AND m.created_at > COALESCE(r.last_read_at, p.created_at)
+		           AND EXISTS (SELECT 1 FROM mentions mn
+		                       WHERE mn.message_id = m.id AND mn.participant_id = $2)) AS unread_direct_mentions
 		 FROM channels c
 		 JOIN participants p ON p.id = $2
 		 JOIN channel_members cm ON cm.channel_id = c.id AND cm.participant_id = $2
@@ -205,7 +211,7 @@ func (s *Store) ListChannelsUnread(ctx context.Context, roomID, participantID st
 	for rows.Next() {
 		var c Channel
 		if err := rows.Scan(&c.ID, &c.RoomID, &c.Name, &c.Topic, &c.CreatedBy, &c.Archived, &c.Private,
-			&c.CreatedAt, &c.LastReadAt, &c.Muted, &c.UnreadCount, &c.UnreadMentions); err != nil {
+			&c.CreatedAt, &c.LastReadAt, &c.Muted, &c.UnreadCount, &c.UnreadMentions, &c.UnreadDirectMentions); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

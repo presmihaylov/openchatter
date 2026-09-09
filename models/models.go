@@ -98,8 +98,11 @@ type Channel struct {
 	// UnreadMentions counts the unread top-level messages that @mention the
 	// viewer (directly or via @channel/@here/@everyone). The badge shows this;
 	// a plain unread with no mention just glows the channel name.
-	UnreadMentions int64      `json:"unread_mentions"`
-	LastReadAt     *time.Time `json:"last_read_at,omitempty"`
+	UnreadMentions int64 `json:"unread_mentions"`
+	// UnreadDirectMentions is the direct-only subset used for favicon attention.
+	// Room-wide broadcast tags deliberately do not count here.
+	UnreadDirectMentions int64      `json:"unread_direct_mentions"`
+	LastReadAt           *time.Time `json:"last_read_at,omitempty"`
 	// Muted is the viewer's per-channel notification mute (ListChannelsUnread
 	// only). Unread state still accumulates; the web client just stays quiet.
 	Muted bool `json:"muted"`

@@ -1626,20 +1626,19 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (offlineOpen) sunkHumans.forEach(renderHuman);
   };
 
-  // the unread total behind the tab title and the favicon pill (task 18):
-  // every non-muted workspace's unread_count from the rail feed, the open
-  // one live from its channel list (a muted channel counts only its
-  // mentions, like the sidebar). Muted workspaces never count.
-  const roomUnread = () => channels.reduce((n, c) => n + (c.muted ? (c.unread_mentions || 0) : (c.unread_count || 0)), 0);
+  // The tab/fav icon is an interruption signal, not an unread counter: only
+  // unread messages that name this human directly count. Plain traffic and
+  // room-wide broadcast tags remain visible in the sidebars but stay out of it.
+  const roomDirectMentions = () => channels.reduce((n, c) => n + (c.unread_direct_mentions || 0), 0);
   const railEntry = (slug) => railRooms.find((w) => w.slug === slug);
   const roomMuted = () => { const w = room && railEntry(room.slug); return !!(w && w.muted); };
-  const unreadTotal = () => {
+  const directMentionTotal = () => {
     let n = 0;
     for (const w of railRooms) {
       if (w.muted || (room && w.slug === room.slug)) continue;
-      n += wsCounts(w).unread;
+      n += wsCounts(w).directMentions;
     }
-    if (room && !roomMuted()) n += roomUnread();
+    if (room && !roomMuted()) n += roomDirectMentions();
     return n;
   };
   const capCount = (n) => (n > 99 ? '99+' : String(n));
@@ -1686,7 +1685,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   const setTitle = () => {
     // "(3) OpenChatter | Acme Team"; plain "OpenChatter" outside a workspace
-    const n = unreadTotal();
+    const n = directMentionTotal();
     document.title = (n > 0 ? `(${n}) ` : '') + 'OpenChatter' + (room ? ' | ' + room.name : '');
     paintFavicon(n);
   };
@@ -2031,6 +2030,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const out = await api(`/api/v1/channels/${ch.id}/read`, { method: 'POST', body: {} });
       ch.unread_count = 0;
       ch.unread_mentions = 0;
+      ch.unread_direct_mentions = 0;
       ch.last_read_at = out.last_read_at;
       renderChannels();
     } catch (e) { console.error('markRead', e); }
@@ -2063,6 +2063,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       muted: false,
       unread_count: 0,
       unread_mentions: 0,
+      unread_direct_mentions: 0,
       subscribed: false,
     } : null);
     openThreadRoot = rootID;
@@ -2349,7 +2350,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       if (inWindow) return;
     }
     const ch = channels.find((c) => c.id === m.channel_id);
-    const sound = !!notifyPrefs.sound;
+    // Relevance can still produce a desktop notification, but audio is the
+    // strongest interruption and is reserved for an explicit direct tag.
+    const sound = !!notifyPrefs.sound && why === 'mention';
     const soundPlayed = sound ? await playPing() : false;
     if (window.Notification && Notification.permission === 'granted' && (document.hidden || !document.hasFocus())) {
       try {
@@ -2421,6 +2424,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           ch.unread_count = (ch.unread_count || 0) + 1;
           if ((m.mentions || []).includes(me.name) || m.is_broadcast) {
             ch.unread_mentions = (ch.unread_mentions || 0) + 1;
+          }
+          if ((m.mentions || []).includes(me.name)) {
+            ch.unread_direct_mentions = (ch.unread_direct_mentions || 0) + 1;
           }
           renderChannels();
         }
@@ -2562,6 +2568,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         if (!ch) return;
         ch.unread_count = (ch.unread_count || 0) + 1;
         if ((m.mentions || []).includes(e.me.name) || m.is_broadcast) ch.unread_mentions = (ch.unread_mentions || 0) + 1;
+        if ((m.mentions || []).includes(e.me.name)) ch.unread_direct_mentions = (ch.unread_direct_mentions || 0) + 1;
         paintRailBadges();
       }
       return;
@@ -2972,11 +2979,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // truth, task 23), else the roll-up the /user list came with
   const wsCounts = (ws) => {
     const e = store.get(ws.slug);
-    if (!e || !e.warm) return { unread: ws.unread_count || 0, mentions: ws.mentions || 0 };
+    if (!e || !e.warm) return { unread: ws.unread_count || 0, mentions: ws.mentions || 0, directMentions: ws.direct_mentions || 0 };
     const chs = e === active() ? channels : e.channels;
     return {
       unread: chs.reduce((n, c) => n + (c.muted ? (c.unread_mentions || 0) : (c.unread_count || 0)), 0),
       mentions: chs.reduce((n, c) => n + (c.unread_mentions || 0), 0),
+      directMentions: chs.reduce((n, c) => n + (c.unread_direct_mentions || 0), 0),
     };
   };
 
