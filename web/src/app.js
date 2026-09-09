@@ -407,18 +407,30 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // size 128 or 512 asks for the copy the server resized on upload; avatars
   // draw at 20 to 96px and the originals run to megabytes
   const blobURLs = {};
-  const blobURL = (attID, size) => {
+  const blobEntry = (attID, size) => {
     const key = attID + ':' + (size || 0);
     if (!blobURLs[key]) {
-      blobURLs[key] = fetch('/api/v1/attachments/' + attID + (size ? '?size=' + size : ''), { headers: authHeaders() })
+      const entry = { url: null, promise: null };
+      blobURLs[key] = entry;
+      entry.promise = fetch('/api/v1/attachments/' + attID + (size ? '?size=' + size : ''), { headers: authHeaders() })
         .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('image fetch failed'))))
-        // Keep one return type for every caller. Replacing this promise with
-        // its string result makes the second rendering of an attachment call
-        // .then() on a string (the feed and thread both render the same root).
-        .then((b) => URL.createObjectURL(b))
-        .catch(() => { delete blobURLs[key]; return null; });
+        .then((b) => {
+          entry.url = URL.createObjectURL(b);
+          return entry.url;
+        })
+        .catch(() => {
+          if (blobURLs[key] === entry) delete blobURLs[key];
+          return null;
+        });
     }
     return blobURLs[key];
+  };
+  // Attachments need a promise every time; avatars can take a resolved object
+  // URL synchronously so a full DOM repaint never inserts a cached shimmer.
+  const blobURL = (attID, size) => blobEntry(attID, size).promise;
+  const avatarBlob = (attID, size) => {
+    const entry = blobEntry(attID, size);
+    return entry.url || entry.promise;
   };
   // An avatar is an image, always. A member who never uploaded one uses the
   // shared seedling. An uploaded image starts with no src at all: avatarImage
@@ -429,7 +441,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (!p) return avatarImage(cls, 'Deleted member', null);
     const size = cls === 'avatar-lg' ? 512 : 128;
     const source = p.avatar_attachment_id
-      ? blobURL(p.avatar_attachment_id, size)
+      ? avatarBlob(p.avatar_attachment_id, size)
       : DEFAULT_AVATAR(size);
     return avatarImage(cls, p.name, source);
   };

@@ -46,6 +46,7 @@ node scripts/presenceperf-check.js              # PRESENCEPERF_CHECK_OK (presenc
 node scripts/sendresponse-check.js              # SENDRESPONSE_CHECK_OK (successful POST settles even when the live feed is down)
 node scripts/threaddiscover-check.js             # THREADDISCOVER_CHECK_OK (a deep-linked readable thread has a transient active sidebar leaf)
 node scripts/imagecache-check.js                  # IMAGECACHE_CHECK_OK (a resolved protected image renders again in its thread without aborting the pane)
+node scripts/avatarcache-check.js                 # AVATARCACHE_CHECK_OK (cached avatar URLs render synchronously across channel switches: no shimmer, no request)
 node scripts/search-check.js                # SEARCH_CHECK_OK (hybrid list, avatar rows, semantic tag, degrade)
 node scripts/searchfilters-check.js         # SEARCHFILTERS_CHECK_OK (From/In/Date/Kind/Has, chips, inline tokens)
 node scripts/copy-check.js                  # COPY_CHECK_OK
