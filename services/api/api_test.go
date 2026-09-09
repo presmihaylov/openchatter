@@ -321,6 +321,42 @@ func TestFullFlow(t *testing.T) {
 	alice.must("POST", "/api/v1/channels/deploys/messages", map[string]any{"body": "nope"}, 409)
 }
 
+// A broadcast must be visible in the message body. The legacy request flag
+// used to let clients silently fan a plain message out to the whole channel.
+func TestBroadcastRequiresVisibleBodyMention(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{
+		"body": "quiet text", "broadcast": true,
+	}, 400)
+	legacyPlain := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{
+		"body": "old client plain text", "broadcast": false,
+	}, 201)
+	if legacyPlain["is_broadcast"] != false {
+		t.Fatalf("a false legacy flag changed plain-message behavior: %v", legacyPlain)
+	}
+
+	msg := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{
+		"body": "@channel visible broadcast",
+	}, 201)
+	if msg["is_broadcast"] != true {
+		t.Fatalf("visible broadcast mention was not recognized: %v", msg)
+	}
+
+	// Edits cannot silently create a new broadcast. Removing the visible tag
+	// does remove the stored broadcast state, so an old alert never goes hidden.
+	plain := alice.must("PATCH", "/api/v1/messages/"+msg["id"].(string), map[string]any{
+		"body": "broadcast withdrawn",
+	}, 200)
+	if plain["is_broadcast"] != false {
+		t.Fatalf("removing the visible tag left hidden broadcast state: %v", plain)
+	}
+	alice.must("PATCH", "/api/v1/messages/"+plain["id"].(string), map[string]any{
+		"body": "edited to add @channel",
+	}, 400)
+}
+
 func TestEventsLongPoll(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, alice, bob := setupRoom(t, srv.URL)
@@ -3128,35 +3164,35 @@ func TestThreadLeaveSilencesBroadcastReplies(t *testing.T) {
 	_, cursor := bodies(0)
 
 	// before leaving, a broadcast reply is hers to hear
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 1", "thread_root_id": rootID, "broadcast": true}, 201)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 1 @channel", "thread_root_id": rootID}, 201)
 	got, cursor := bodies(cursor)
-	if !got["loud 1"] {
+	if !got["loud 1 @channel"] {
 		t.Fatalf("before leave, a broadcast reply did not reach her: %v", got)
 	}
 
 	alice.must("POST", "/api/v1/threads/"+rootID+"/leave", map[string]any{"left": true}, 200)
 	_, cursor = bodies(cursor)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "quiet", "thread_root_id": rootID}, 201)
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 2", "thread_root_id": rootID, "broadcast": true}, 201)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 2 @channel", "thread_root_id": rootID}, 201)
 	got, cursor = bodies(cursor)
-	if got["quiet"] || got["loud 2"] {
+	if got["quiet"] || got["loud 2 @channel"] {
 		t.Fatalf("a left thread still woke her: %v", got)
 	}
 	// a direct mention still gets through, and puts her back in the thread
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice come back", "thread_root_id": rootID, "broadcast": true}, 201)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice come back", "thread_root_id": rootID}, 201)
 	if got, cursor = bodies(cursor); !got["@alice come back"] {
 		t.Fatalf("a direct mention must always get through: %v", got)
 	}
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 3", "thread_root_id": rootID, "broadcast": true}, 201)
-	if got, cursor = bodies(cursor); !got["loud 3"] {
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 3 @channel", "thread_root_id": rootID}, 201)
+	if got, cursor = bodies(cursor); !got["loud 3 @channel"] {
 		t.Fatalf("after the mention pulled her back, the thread went silent: %v", got)
 	}
 	alice.must("POST", "/api/v1/threads/"+rootID+"/leave", map[string]any{"left": true}, 200)
 	_, cursor = bodies(cursor)
 
 	// a root broadcast in the channel still reaches everyone
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "room-wide", "broadcast": true}, 201)
-	if got, _ = bodies(cursor); !got["room-wide"] {
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "room-wide @channel"}, 201)
+	if got, _ = bodies(cursor); !got["room-wide @channel"] {
 		t.Fatalf("a root broadcast was swallowed: %v", got)
 	}
 }

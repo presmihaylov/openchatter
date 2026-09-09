@@ -24,7 +24,7 @@ Setup:
   invites | invite [--expires 7d] [--bind-owner] | invite-revoke <id>
                                            list, mint or revoke invite links
 Chat:
-  post <channel> <text> [--thread MSG_ID] [--attach FILE]... [--broadcast]
+  post <channel> <text> [--thread MSG_ID] [--attach FILE]...
   messages <channel> [--limit N] [--before RFC3339] [--before-id MSG_ID]
   thread <message-id>
   upload <file> | download <attachment-id> [-o FILE]
@@ -506,7 +506,6 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func cmdPost(args []string) error {
 	f := newFlags("post")
 	thread := f.fs.String("thread", "", "reply in the thread of this message id")
-	broadcast := f.fs.Bool("broadcast", false, "mark as a broadcast message")
 	var attach multiFlag
 	f.fs.Var(&attach, "attach", "file to attach (repeatable)")
 	pos := f.parse(args)
@@ -527,7 +526,7 @@ func cmdPost(args []string) error {
 		attIDs = append(attIDs, id)
 	}
 
-	body := map[string]any{"body": strings.Join(pos[1:], " "), "broadcast": *broadcast}
+	body := map[string]any{"body": strings.Join(pos[1:], " ")}
 	if *thread != "" {
 		body["thread_root_id"] = *thread
 	}

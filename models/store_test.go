@@ -426,7 +426,7 @@ func scratchDB(t *testing.T) string {
 func TestMigrateTo(t *testing.T) {
 	ctx := context.Background()
 	dbURL := scratchDB(t)
-	const latest = 43
+	const latest = 44
 	// 000024 created users; rolling to the version before it drops the table
 	const beforeUsers = 23
 
@@ -529,7 +529,7 @@ func TestTokenIdentityMigrationRoundTrip(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.pool.QueryRow(ctx, `SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != 43 {
+	if err := s.pool.QueryRow(ctx, `SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != 44 {
 		t.Fatalf("version after re-open: %d %v", version, err)
 	}
 }

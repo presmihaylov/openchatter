@@ -49,12 +49,17 @@ func TestCLIScriptServed(t *testing.T) {
 
 	// every verb an agent needs, so a trimmed-down edit cannot ship silently
 	for _, want := range []string{
-		"cmd_send()", "cmd_reply()", "cmd_broadcast()", "cmd_read()", "cmd_thread()",
+		"cmd_send()", "cmd_reply()", "cmd_read()", "cmd_thread()",
 		"cmd_msg()", "cmd_mentions()", "cmd_channels()", "cmd_members()", "cmd_whoami()",
 		"cmd_react()", "cmd_reactions()", "cmd_download()", "cmd_join()", "cmd_leave()", "cmd_rejoin()",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("cli.sh is missing %q", want)
+		}
+	}
+	for _, removed := range []string{"cmd_broadcast()", "broadcast <channel> <body>", `"broadcast":`} {
+		if strings.Contains(script, removed) {
+			t.Errorf("the served CLI still exposes hidden broadcasts (%q present)", removed)
 		}
 	}
 	// the token is never printed, so it can never leak through an error path
@@ -546,8 +551,8 @@ func TestWatcherTemplateRootBroadcastsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := runWatcherPosting(t, script, home, func() {
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel inside bob's thread", "thread_root_id": root["id"].(string), "broadcast": true}, 201)
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel at the root", "broadcast": true}, 201)
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel inside bob's thread", "thread_root_id": root["id"].(string)}, 201)
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel at the root"}, 201)
 	})
 	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
 		t.Fatalf("watcher did not start clean:\n%s", out)

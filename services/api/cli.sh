@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.3.0"
+VERSION="2.4.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -27,7 +27,6 @@ TALK
   reply --latest <channel> <body> reply under the newest thread you are part of there
   send <channel> <body>          start a NEW TOPIC at the top level of a channel
                                  (prints a caution and the recent roots, see --new-topic)
-  broadcast <channel> <body>     post and alert every member of the channel
                                  Bodies render as Markdown. Always fence code, diffs and
                                  logs in triple backticks (or pass --code): a bare - or +
                                  at line start is a bullet marker, so an unfenced diff is
@@ -106,13 +105,13 @@ FLAGS
   --wait <seconds>      mentions: long-poll for up to N seconds
   --peek                inbox: list without marking delivered
   --oldest / --newest   read: ordering (default oldest last, like a chat window)
-  --code[=lang]         send/reply/broadcast: wrap the whole body in a ```lang fence
-  --force               send/reply/broadcast: post an unfenced diff anyway
-  --attach <file>       send/reply/broadcast: attach a file (repeatable)
-  --body-file <path>    send/reply/broadcast: read the body from a file (- is stdin)
+  --code[=lang]         send/reply: wrap the whole body in a ```lang fence
+  --force               send/reply: post an unfenced diff anyway
+  --attach <file>       send/reply: attach a file (repeatable)
+  --body-file <path>    send/reply: read the body from a file (- is stdin)
                         instead of the argument; a long or quote-heavy body never
                         passes through shell quoting. A body argument of - is stdin too.
-  --force-mentions      send/reply/broadcast: post even if a handle is unknown
+  --force-mentions      send/reply: post even if a handle is unknown
                         (for writing ABOUT a handle; `backticks` also exempt it)
   --new-topic           send: you mean a new root, skip the caution and the
                         list of recent roots (for scripted sends)
@@ -439,7 +438,8 @@ warn_unknown_channels() {
   return 0
 }
 
-# post_message CHANNEL BODY THREAD_ROOT BROADCAST — the one write path
+# post_message CHANNEL BODY THREAD_ROOT — the one write path. Broadcasts are
+# derived by the server only from a visible broadcast mention in BODY.
 # looks_like_unfenced_diff BODY — two or more consecutive lines starting with
 # - or + that are not plain "- text" bullets, and no fence anywhere. Markdown
 # would render that as a list with code boxes inside, the leading -/+ eaten.
@@ -461,7 +461,7 @@ sys.exit(1)
 }
 
 post_message() {
-  local channel="$1" body="$2" root="$3" broadcast="$4" ids payload
+  local channel="$1" body="$2" root="$3" ids payload
   if [ "$WRAP_CODE" = "1" ]; then body=$(printf '```%s\n%s\n```' "$WRAP_LANG" "$body"); fi
   if [ "$FORCE" != "1" ] && looks_like_unfenced_diff "$body"; then
     printf 'openchatter: this looks like a diff or code and it is unfenced. Markdown will eat the leading -/+ as bullets\n' >&2
@@ -471,9 +471,9 @@ post_message() {
   ids=$(upload_attachments)
   # --force-mentions already says "I know", so do not nag about it
   [ "$FORCE_MENTIONS" = "1" ] || { warn_unknown_mentions "$body"; warn_unknown_channels "$body"; }
-  payload=$(BODY="$body" ROOT="$root" BCAST="$broadcast" IDS="$ids" FORCE="$FORCE_MENTIONS" python3 -c '
+  payload=$(BODY="$body" ROOT="$root" IDS="$ids" FORCE="$FORCE_MENTIONS" python3 -c '
 import json, os
-p = {"body": os.environ["BODY"], "broadcast": os.environ["BCAST"] == "1"}
+p = {"body": os.environ["BODY"]}
 if os.environ["ROOT"]: p["thread_root_id"] = os.environ["ROOT"]
 if os.environ["IDS"]: p["attachment_ids"] = os.environ["IDS"].split()
 if os.environ["FORCE"] == "1": p["allow_unknown_mentions"] = True
@@ -530,7 +530,7 @@ warn_top_level() {
   # under mentions-only, a root with no handle reaches no agent at all
   case "$2" in
     *@*) ;;
-    *) printf 'openchatter: no @handle in this body: agents run mentions-only, so no agent will hear it. Tag the handle you want to act, or broadcast.\n' >&2 ;;
+    *) printf 'openchatter: no @handle in this body: agents run mentions-only, so no agent will hear it. Tag the handle you want to act, or include a visible broadcast mention.\n' >&2 ;;
   esac
   request GET "/api/v1/channels/$1/messages?limit=40"
   [ "$CODE" = "200" ] || return 0
@@ -571,14 +571,7 @@ cmd_send() {
   local body; body=$(body_of "${2:-}")
   [ -n "$body" ] || die "empty body"
   [ "$NEW_TOPIC" = "1" ] || warn_top_level "$1" "$body"
-  post_message "$1" "$body" "" 0
-}
-
-cmd_broadcast() {
-  has_body $# 2 && [ $# -ge 1 ] || die "usage: cli.sh broadcast <channel> <body>   (or --body-file <path>)"
-  local body; body=$(body_of "${2:-}")
-  [ -n "$body" ] || die "empty body"
-  post_message "$1" "$body" "" 1
+  post_message "$1" "$body" ""
 }
 
 # latest_thread_in CHANNEL — the newest thread you started, replied in, or were
@@ -599,7 +592,7 @@ cmd_reply() {
     [ -n "$body" ] || die "empty body"
     root=$(latest_thread_in "$LATEST")
     channel=$(channel_of "$root")
-    post_message "$channel" "$body" "$root" 0
+    post_message "$channel" "$body" "$root"
     return
   fi
   has_body $# 2 && [ $# -ge 1 ] || die "usage: cli.sh reply <message-id> <body>   (or reply --latest <channel> <body>, or --body-file <path>)"
@@ -607,7 +600,7 @@ cmd_reply() {
   [ -n "$body" ] || die "empty body"
   root=$(thread_root_of "$1")
   channel=$(channel_of "$1")
-  post_message "$channel" "$body" "$root" 0
+  post_message "$channel" "$body" "$root"
 }
 
 cmd_read() {
@@ -1088,7 +1081,6 @@ cmd="${ARGS[0]}"
 set -- "${ARGS[@]:1}"
 case "$cmd" in
   send) cmd_send "$@" ;;
-  broadcast) cmd_broadcast "$@" ;;
   reply) cmd_reply "$@" ;;
   read) cmd_read "$@" ;;
   thread) cmd_thread "$@" ;;

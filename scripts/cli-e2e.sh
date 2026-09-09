@@ -173,7 +173,7 @@ ok "a new member does not trip the stale-cache warning"
 "${A[@]}" mentions --limit 50 >/dev/null   # each side starts its cursor at "now"
 "${B[@]}" mentions --limit 50 >/dev/null
 "${A[@]}" send general 'ping @bob again' >/dev/null
-"${B[@]}" broadcast general 'everybody read this' >/dev/null
+"${B[@]}" send general '@channel everybody read this' --new-topic >/dev/null
 out=$("${B[@]}" mentions --limit 50)
 grep -q 'ping @bob again' <<<"$out" || fail "mentions missed a direct mention"
 # the cursor advanced, so a second run is quiet

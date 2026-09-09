@@ -337,7 +337,7 @@ func assertChannelWritable(ctx context.Context, tx pgx.Tx, roomID, messageID str
 	return nil
 }
 
-func (s *Store) UpdateMessageBody(ctx context.Context, roomID, id, body string) (Message, error) {
+func (s *Store) UpdateMessageBody(ctx context.Context, roomID, id, body string, isBroadcast bool) (Message, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Message{}, err
@@ -356,9 +356,9 @@ func (s *Store) UpdateMessageBody(ctx context.Context, roomID, id, body string) 
 	}
 
 	res, err := tx.Exec(ctx,
-		`UPDATE messages SET body = $3, edited_at = now(), embed_status = 'pending', embed_attempts = 0
+		`UPDATE messages SET body = $3, is_broadcast = $4, edited_at = now(), embed_status = 'pending', embed_attempts = 0
 		 WHERE room_id = $1 AND id = $2`,
-		roomID, id, body)
+		roomID, id, body, isBroadcast)
 	if err != nil {
 		return Message{}, err
 	}

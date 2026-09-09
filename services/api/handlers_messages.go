@@ -22,7 +22,9 @@ type postMessageReq struct {
 	Body          string   `json:"body"`
 	ThreadRootID  *string  `json:"thread_root_id"`
 	AttachmentIDs []string `json:"attachment_ids"`
-	Broadcast     bool     `json:"broadcast"`
+	// Broadcast only keeps old clients that send false working. A true value is
+	// rejected: broadcasts are derived exclusively from a visible body mention.
+	Broadcast bool `json:"broadcast"`
 	// AllowUnknownMentions posts anyway when the body names a handle nobody
 	// answers to. Without it an unknown @handle is a 422, so a typo cannot
 	// silently address nobody.
@@ -61,6 +63,10 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, p mod
 	}
 	if len(req.Body) > maxMessageBytes {
 		writeErr(w, http.StatusBadRequest, "message too long (32KB max)")
+		return
+	}
+	if req.Broadcast {
+		writeErr(w, http.StatusBadRequest, "broadcast flag was removed; put a visible broadcast mention in the message body")
 		return
 	}
 	if len(req.AttachmentIDs) > 10 {
@@ -153,7 +159,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, p mod
 		ThreadRootID:  req.ThreadRootID,
 		AuthorID:      p.ID,
 		Body:          req.Body,
-		IsBroadcast:   req.Broadcast || broadcast,
+		IsBroadcast:   broadcast,
 		AttachmentIDs: req.AttachmentIDs,
 		MentionIDs:    mentionIDs,
 	})
@@ -228,7 +234,8 @@ type editMessageReq struct {
 	Body string `json:"body"`
 }
 
-// handleEditMessage: authors edit their own messages (mentions are not re-parsed).
+// handleEditMessage: authors edit their own messages. Edits never create an
+// alert, but removing a visible broadcast mention clears its stored state.
 func (s *Server) handleEditMessage(w http.ResponseWriter, r *http.Request, p models.Participant) {
 	id := r.PathValue("id")
 	if !isUUID(id) {
@@ -253,7 +260,12 @@ func (s *Server) handleEditMessage(w http.ResponseWriter, r *http.Request, p mod
 		writeErr(w, http.StatusBadRequest, "body must be 1 byte to 32KB")
 		return
 	}
-	updated, err := s.store.UpdateMessageBody(r.Context(), p.RoomID, id, req.Body)
+	_, bodyBroadcast := mentions.Parse(req.Body, nil)
+	if bodyBroadcast && !msg.IsBroadcast {
+		writeErr(w, http.StatusBadRequest, "a broadcast mention cannot be added by editing; send a new message")
+		return
+	}
+	updated, err := s.store.UpdateMessageBody(r.Context(), p.RoomID, id, req.Body, msg.IsBroadcast && bodyBroadcast)
 	if err != nil {
 		writeStoreErr(w, err)
 		return

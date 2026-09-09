@@ -33,10 +33,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     method: 'POST', token: bob.token, body: Object.assign({ body }, extra),
   });
 
-  const browser = await puppeteer.launch({
-    executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    headless: 'new', args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  });
+  const browser = process.env.BROWSER_URL
+    ? await puppeteer.connect({ browserURL: process.env.BROWSER_URL })
+    : await puppeteer.launch({
+      executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      headless: 'new', args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    });
   await browser.defaultBrowserContext().overridePermissions(SERVER, ['notifications']);
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
@@ -108,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert(got.length === 1 && got[0].why === 'mention', 'mention in muted channel must ping: ' + JSON.stringify(got));
   assert(await plazaGlows(), 'a mention must still glow a muted channel');
   await sleep(3200); // the mention opened plaza's quiet window; let it close
-  await say('plaza', 'all hands', { broadcast: true });
+  await say('plaza', '@channel all hands');
   await settle(() => window.__notes.length >= 1);
   got = await notes();
   assert(got.length === 1 && got[0].why === 'broadcast', 'broadcast in muted channel must ping: ' + JSON.stringify(got));

@@ -13,6 +13,7 @@ var broadcastRe = regexp.MustCompile(`(?i)(^|[^\w@])@(channel|here|everyone)\b`)
 // contains a broadcast mention (@channel/@here/@everyone). Names may contain
 // upper case and spaces, so each known name is matched literally after an @.
 func Parse(body string, known map[string]bool) (names []string, broadcast bool) {
+	body = stripCode(body)
 	broadcast = broadcastRe.MatchString(body)
 
 	type hit struct {
@@ -57,13 +58,17 @@ var (
 	broadcastWords = map[string]bool{"channel": true, "here": true, "everyone": true}
 )
 
+func stripCode(body string) string {
+	return inlineRe.ReplaceAllString(fenceRe.ReplaceAllString(body, " "), " ")
+}
+
 // Unknown returns the @handles in body that match no known participant, in body
 // order, deduped. Code spans and fenced blocks are stripped first, and the
 // leading guard skips email addresses, so only real handles are reported. A
 // handle that only prefixes a longer known name (@Maria of "@Maria Chen") is
 // known, not unknown.
 func Unknown(body string, known map[string]bool) []string {
-	clean := inlineRe.ReplaceAllString(fenceRe.ReplaceAllString(body, " "), " ")
+	clean := stripCode(body)
 
 	var out []string
 	seen := map[string]bool{}

@@ -19,6 +19,9 @@ func TestParse(t *testing.T) {
 		{"@unknown ping", nil, false},
 		{"@channel deploy done", nil, true},
 		{"@here and @bob-2", []string{"bob-2"}, true},
+		{"describe `@channel` without notifying", nil, false},
+		{"code `@alice` without notifying", nil, false},
+		{"```\n@here in a fence\n```", nil, false},
 		{"(@alice)", []string{"alice"}, false},
 		{"no mentions", nil, false},
 	}
