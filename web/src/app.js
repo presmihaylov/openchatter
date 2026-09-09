@@ -412,11 +412,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (!blobURLs[key]) {
       blobURLs[key] = fetch('/api/v1/attachments/' + attID + (size ? '?size=' + size : ''), { headers: authHeaders() })
         .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('image fetch failed'))))
-        .then((b) => {
-          const url = URL.createObjectURL(b);
-          blobURLs[key] = url;
-          return url;
-        })
+        // Keep one return type for every caller. Replacing this promise with
+        // its string result makes the second rendering of an attachment call
+        // .then() on a string (the feed and thread both render the same root).
+        .then((b) => URL.createObjectURL(b))
         .catch(() => { delete blobURLs[key]; return null; });
     }
     return blobURLs[key];
