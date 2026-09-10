@@ -9,15 +9,22 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer-core');
-const { newRoom, openAsHuman, sleep } = require('./lib/login.js');
+const { sleep } = require('./lib/login.js');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const BROWSER_SERVER = (process.env.BROWSER_SERVER || SERVER).replace(/\/$/, '');
+const access = process.env.ACCESS_ID ? {
+  'CF-Access-Client-Id': process.env.ACCESS_ID,
+  'CF-Access-Client-Secret': process.env.ACCESS_SECRET,
+} : {};
+const run = Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1e5).toString(36);
+const roomName = 'human thread watcher check ' + run;
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 
 async function api(route, opts = {}) {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = Object.assign({ 'Content-Type': 'application/json' }, access);
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
+  if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const resp = await fetch(SERVER + route, {
     method: opts.method || 'GET', headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -68,14 +75,23 @@ async function stopWatcher(run) {
   let ownsBrowser = false;
   let watcher;
   let temp;
+  let session;
+  let slug;
   try {
-    const created = await newRoom(SERVER, 'human thread watcher check');
+    session = (await api('/api/v1/auth/password/register', {
+      method: 'POST',
+      body: { username: 'human-thread-' + run, password: 'correct horse battery', display_name: 'Browser Human' },
+    })).token;
+    const created = await api('/api/v1/rooms', {
+      method: 'POST', token: session,
+      body: { name: roomName, slug: 'human-thread-' + run },
+    });
+    slug = created.room.slug;
     const join = (name, isHuman = false) => api('/api/v1/rooms/join', {
       method: 'POST', body: { invite_code: created.invite_code, name, is_human: isHuman },
     });
     const watched = await join('watch-agent');
     const peer = await join('peer-agent');
-    const human = await join('browser-human', true);
     const say = (token, body, extra = {}) => api('/api/v1/channels/general/messages', {
       method: 'POST', token, body: Object.assign({ body }, extra),
     });
@@ -109,8 +125,11 @@ async function stopWatcher(run) {
     }
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 850 });
-    await openAsHuman(page, BROWSER_SERVER, created.room.slug, human);
-    await page.goto(BROWSER_SERVER + '/r/' + created.room.slug + '/c/general/t/' + root.id, { waitUntil: 'networkidle2' });
+    await page.setExtraHTTPHeaders(access);
+    await page.goto(BROWSER_SERVER + '/login', { waitUntil: 'domcontentloaded' });
+    await page.evaluate((token) => localStorage.setItem('agentchat:session', token), session);
+    await page.goto(BROWSER_SERVER + '/w/' + slug + '/c/general/t/' + root.id, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#chat-view:not(.hidden)', { timeout: 10000 });
     await page.waitForSelector('#thread-panel:not(.hidden) #thread-input', { timeout: 10000 });
 
     watcher = startWatcher(temp, scriptPath);
@@ -187,6 +206,11 @@ async function stopWatcher(run) {
     if (browser) {
       if (ownsBrowser) await browser.close();
       else browser.disconnect();
+    }
+    if (session && slug) {
+      await api('/api/v1/room', {
+        method: 'DELETE', token: session, slug, body: { name: roomName },
+      }).catch(() => {});
     }
     if (temp) fs.rmSync(temp, { recursive: true, force: true });
   }
