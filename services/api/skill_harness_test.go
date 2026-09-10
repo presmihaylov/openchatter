@@ -42,6 +42,8 @@ func TestSkillHarnessGuides(t *testing.T) {
 			`"ac" means that`, "same command with your env file, nothing else",
 			"http://public.test/skill/watch.sh", "http://public.test/skill/bridge.sh", "http://public.test/skill/inject.sh",
 			`Keep ` + "`" + `WATCH=""` + "`" + `, the fleet default`, "Reactions never wake you",
+			"human's untagged reply", "agent's untagged reply", "OPENCHATTER_HUMAN_THREAD_REPLIES=0",
+			"author_kind", "human", "agent", "watcher 2.5.0",
 			"harness-keys.env", "never typed on a command line",
 			"curl -s \"$SERVER/api/v1/me\"", "byte for byte",
 			"http://public.test/skill#humans-and-workspaces", "nothing changes for you",
@@ -58,6 +60,17 @@ func TestSkillHarnessGuides(t *testing.T) {
 		for _, gone := range skillCreateRecipeGone {
 			if strings.Contains(doc, gone) {
 				t.Fatalf("/skill/%s still carries the unauthenticated create recipe %q", slug, gone)
+			}
+		}
+	}
+
+	// The main guide and the two specialized guides carry the same routing
+	// contract as the generated harness pages.
+	for _, path := range []string{"/skill", "/skill/claude-code", "/skill/hermes"} {
+		doc := getText(t, srv.URL+path)
+		for _, want := range []string{"author_kind", "OPENCHATTER_HUMAN_THREAD_REPLIES=0", "human", "agent"} {
+			if !strings.Contains(doc, want) {
+				t.Fatalf("%s missing human-thread routing text %q", path, want)
 			}
 		}
 	}

@@ -50,10 +50,11 @@ type Delivery struct {
 }
 
 // createDeliveriesTx hangs one receipt per addressed agent off a fresh
-// message.created event: every mentioned agent, every agent still in the
-// thread (root author and repliers who did not leave), and for a root
-// broadcast every agent member of the channel, capped. The author never gets
-// one. Online agents start accepted, offline ones deferred.
+// message.created event: every mentioned agent; on a HUMAN reply, every agent
+// still participating in the thread (authored, replied, or was mentioned and
+// did not leave); and for a root broadcast every agent member of the channel,
+// capped. An untagged agent reply creates no thread receipts. The author never
+// gets one. Online agents start accepted, offline ones deferred.
 func createDeliveriesTx(ctx context.Context, tx pgx.Tx, p CreateMessageParams, seq int64) error {
 	broadcastRoot := p.IsBroadcast && p.ThreadRootID == nil
 	mentionIDs := p.MentionIDs
@@ -68,11 +69,15 @@ func createDeliveriesTx(ctx context.Context, tx pgx.Tx, p CreateMessageParams, s
 		   WHERE pa.room_id = $1 AND NOT pa.is_human AND NOT pa.revoked AND pa.id <> $3
 		     AND (
 		       pa.id = ANY($4::uuid[])
-		       OR ($5::uuid IS NOT NULL AND EXISTS (
-		         SELECT 1 FROM messages m WHERE m.room_id = $1
-		           AND COALESCE(m.thread_root_id, m.id) = $5 AND m.author_id = pa.id AND m.kind <> 'system'
-		           AND NOT EXISTS (SELECT 1 FROM thread_states ts
-		                           WHERE ts.root_id = $5 AND ts.participant_id = pa.id AND ts.left_at IS NOT NULL)))
+		       OR ($5::uuid IS NOT NULL
+		           AND EXISTS (SELECT 1 FROM participants author WHERE author.id = $3 AND author.is_human)
+		           AND EXISTS (
+		             SELECT 1 FROM messages m
+		             LEFT JOIN mentions mn ON mn.message_id = m.id AND mn.participant_id = pa.id
+		             WHERE m.room_id = $1 AND COALESCE(m.thread_root_id, m.id) = $5
+		               AND (m.author_id = pa.id OR mn.participant_id IS NOT NULL) AND m.kind <> 'system'
+		               AND NOT EXISTS (SELECT 1 FROM thread_states ts
+		                               WHERE ts.root_id = $5 AND ts.participant_id = pa.id AND ts.left_at IS NOT NULL)))
 		       OR ($6 AND EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = $7 AND cm.participant_id = pa.id))
 		     )
 		   ORDER BY (pa.id = ANY($4::uuid[])) DESC, pa.created_at, pa.id

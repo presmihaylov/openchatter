@@ -80,8 +80,8 @@ func (s *Store) ListEvents(ctx context.Context, roomID string, afterSeq int64, l
 	return out, rows.Err()
 }
 
-// ParticipatedThreadRoots reports which of rootIDs are threads the participant
-// wrote in (as root author or replier). Used by the events relevance filter.
+// ParticipatedThreadRoots reports which rootIDs the participant authored,
+// replied in, or was mentioned in. Used by the events relevance filter.
 func (s *Store) ParticipatedThreadRoots(ctx context.Context, roomID, participantID string, rootIDs []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if len(rootIDs) == 0 {
@@ -89,7 +89,8 @@ func (s *Store) ParticipatedThreadRoots(ctx context.Context, roomID, participant
 	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT DISTINCT COALESCE(m.thread_root_id, m.id) FROM messages m
-		 WHERE m.room_id = $1 AND m.author_id = $2 AND m.kind <> 'system'
+		 LEFT JOIN mentions mn ON mn.message_id = m.id AND mn.participant_id = $2
+		 WHERE m.room_id = $1 AND (m.author_id = $2 OR mn.participant_id IS NOT NULL) AND m.kind <> 'system'
 		   AND COALESCE(m.thread_root_id, m.id) = ANY($3::uuid[])
 		   AND NOT EXISTS (SELECT 1 FROM thread_states ts
 		                   WHERE ts.root_id = COALESCE(m.thread_root_id, m.id)

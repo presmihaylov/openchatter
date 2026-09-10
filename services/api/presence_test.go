@@ -105,7 +105,7 @@ func TestAgentPresence(t *testing.T) {
 	// broadcast, and noise he should never see
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob one"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "not for bob"}, 201)
-	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "two in bob's thread", "thread_root_id": rootID}, 201)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "two in bob's thread", "thread_root_id": rootID}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel three"}, 201)
 	want := []string{"@bob one", "two in bob's thread", "@channel three"}
 

@@ -80,9 +80,9 @@ func (s *Store) SetAck(ctx context.Context, roomID, messageID, participantID str
 }
 
 // PendingAcks lists the asks addressed to participantID that it has not acked,
-// oldest first. An ask is a message that mentions the participant, or a reply
-// under a thread root the participant wrote. Its own messages never count, and
-// neither do system rows: an agent must not be nagged about its own timeline.
+// oldest first. An ask is a direct mention, or a HUMAN reply under a thread
+// root the participant wrote. Untagged agent replies, own messages and system
+// rows do not count.
 func (s *Store) PendingAcks(ctx context.Context, roomID, participantID string, limit int) ([]PendingAck, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -99,7 +99,7 @@ func (s *Store) PendingAcks(ctx context.Context, roomID, participantID string, l
 		  WHERE m.room_id = $1
 		    AND m.kind = 'message'
 		    AND m.author_id <> $2
-		    AND (mn.participant_id IS NOT NULL OR root.author_id = $2)
+		    AND (mn.participant_id IS NOT NULL OR (a.is_human AND root.author_id = $2))
 		    -- membership, not privacy, is the read gate everywhere else in the
 		    -- room, and a mention is written even for a non-member. Without this
 		    -- the pending list hands out excerpts you cannot read.

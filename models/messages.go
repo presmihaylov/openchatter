@@ -24,6 +24,7 @@ type CreateMessageParams struct {
 // mentions and reply counts. Split so searches can append a score column.
 const messageColumns = `
 	       m.id, m.room_id, m.channel_id, m.thread_root_id, m.author_id, a.name,
+	       CASE WHEN a.is_human THEN 'human' ELSE 'agent' END AS author_kind,
 	       m.body, m.is_broadcast, m.kind, m.created_at, m.edited_at,
 	       (SELECT count(*) FROM messages r WHERE r.thread_root_id = m.id) AS reply_count,
 	       (SELECT max(r.created_at) FROM messages r WHERE r.thread_root_id = m.id) AS last_reply_at,
@@ -72,7 +73,7 @@ const messageSelect = "SELECT" + messageColumns + messageFrom
 func scanMessage(row pgx.Row) (Message, error) {
 	var m Message
 	var attJSON, menJSON, repJSON, rxnJSON, ackJSON []byte
-	err := row.Scan(&m.ID, &m.RoomID, &m.ChannelID, &m.ThreadRootID, &m.AuthorID, &m.AuthorName,
+	err := row.Scan(&m.ID, &m.RoomID, &m.ChannelID, &m.ThreadRootID, &m.AuthorID, &m.AuthorName, &m.AuthorKind,
 		&m.Body, &m.IsBroadcast, &m.Kind, &m.CreatedAt, &m.EditedAt, &m.ReplyCount, &m.LastReplyAt,
 		&repJSON, &attJSON, &menJSON, &rxnJSON, &ackJSON)
 	if err != nil {
@@ -427,7 +428,7 @@ func reverse(ms []Message) {
 }
 
 // messageEvent is the message.created payload: the message plus the distinct
-// author names in its thread (root author first, then repliers), this one included.
+// participants in its thread (authors and mentioned members, first-seen first).
 type messageEvent struct {
 	Message
 	ThreadParticipants []string `json:"thread_participants"`
@@ -435,13 +436,21 @@ type messageEvent struct {
 
 func threadParticipantNamesTx(ctx context.Context, tx pgx.Tx, roomID, rootID string) ([]string, error) {
 	rows, err := tx.Query(ctx,
-		`SELECT p.name FROM messages m JOIN participants p ON p.id = m.author_id
-		 WHERE m.room_id = $1 AND COALESCE(m.thread_root_id, m.id) = $2
-		   AND m.kind <> 'system'
-		   AND NOT EXISTS (SELECT 1 FROM thread_states ts
+		`SELECT p.name
+		 FROM (
+		   SELECT m.author_id AS participant_id, m.created_at, m.id AS message_id, 0 AS within_message
+		   FROM messages m
+		   WHERE m.room_id = $1 AND COALESCE(m.thread_root_id, m.id) = $2 AND m.kind <> 'system'
+		   UNION ALL
+		   SELECT mn.participant_id, m.created_at, m.id AS message_id, 1 AS within_message
+		   FROM messages m JOIN mentions mn ON mn.message_id = m.id
+		   WHERE m.room_id = $1 AND COALESCE(m.thread_root_id, m.id) = $2 AND m.kind <> 'system'
+		 ) seen
+		 JOIN participants p ON p.id = seen.participant_id
+		 WHERE NOT EXISTS (SELECT 1 FROM thread_states ts
 		                   WHERE ts.root_id = $2 AND ts.participant_id = p.id
 		                     AND ts.left_at IS NOT NULL)
-		 ORDER BY m.created_at, m.id`, roomID, rootID)
+		 ORDER BY seen.created_at, seen.message_id, seen.within_message, p.name`, roomID, rootID)
 	if err != nil {
 		return nil, err
 	}

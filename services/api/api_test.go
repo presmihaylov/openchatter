@@ -547,7 +547,12 @@ func TestRolesAndModeration(t *testing.T) {
 
 func TestEventFiltering(t *testing.T) {
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	maya := &testClient{t: t, base: srv.URL}
+	joined := maya.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	maya.token = joined["token"].(string)
 
 	cursor := func(c *testClient) string {
 		out := c.must("GET", "/api/v1/events", nil, 200)
@@ -567,13 +572,17 @@ func TestEventFiltering(t *testing.T) {
 		t.Fatal("cursor did not advance past filtered events")
 	}
 
-	// relevant to bob: broadcast, direct mention, and a thread he wrote in
+	// relevant to bob: broadcast, direct mention, and a human
+	// follow-up in a thread where the root mentioned him. An untagged agent
+	// follow-up in either thread is not a wake.
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel heads up"}, 201)
-	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @bob"}, 201)
+	mentioned := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @bob"}, 201)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my reply", "thread_root_id": plain["id"].(string)}, 201)
+	maya.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "human after my reply", "thread_root_id": plain["id"].(string)}, 201)
 	// another irrelevant top-level message mixed in between relevant ones
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "more musing"}, 201)
-	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "in-thread answer", "thread_root_id": plain["id"].(string)}, 201)
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "agent follow-up", "thread_root_id": mentioned["id"].(string)}, 201)
+	maya.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "human follow-up", "thread_root_id": mentioned["id"].(string)}, 201)
 
 	out = bob.must("GET", "/api/v1/events?after="+c0+"&relevant=true", nil, 200)
 	bodies := []string{}
@@ -584,19 +593,25 @@ func TestEventFiltering(t *testing.T) {
 		}
 		bodies = append(bodies, ev["payload"].(map[string]any)["body"].(string))
 	}
-	want := []string{"@channel heads up", "hey @bob", "my reply", "in-thread answer"}
+	want := []string{"@channel heads up", "hey @bob", "human after my reply", "human follow-up"}
 	if fmt.Sprint(bodies) != fmt.Sprint(want) {
 		t.Fatalf("relevant events = %v, want %v", bodies, want)
 	}
-	// every message.created names the thread's authors so far, root author first,
-	// so a firehose watcher can hear its own threads without a server-side filter
+	// Every message.created carries the server-derived author kind. Thread
+	// participants include both authors and mentioned members, in first-seen
+	// order, so bob remains involved without having to write first.
 	parts := map[string]string{}
+	kinds := map[string]string{}
 	for _, e := range out["events"].([]any) {
 		pl := e.(map[string]any)["payload"].(map[string]any)
 		parts[pl["body"].(string)] = fmt.Sprint(pl["thread_participants"])
+		kinds[pl["body"].(string)] = fmt.Sprint(pl["author_kind"])
 	}
-	if parts["hey @bob"] != "[alice]" || parts["my reply"] != "[alice bob]" || parts["in-thread answer"] != "[alice bob]" {
+	if parts["hey @bob"] != "[alice bob]" || parts["human after my reply"] != "[alice bob maya]" || parts["human follow-up"] != "[alice bob maya]" {
 		t.Fatalf("thread_participants: %v", parts)
+	}
+	if kinds["hey @bob"] != "agent" || kinds["human follow-up"] != "human" {
+		t.Fatalf("author_kind: %v", kinds)
 	}
 
 	// types filter
@@ -605,8 +620,8 @@ func TestEventFiltering(t *testing.T) {
 		t.Fatalf("types filter leaked: %v", out["events"])
 	}
 	out = bob.must("GET", "/api/v1/events?after="+c0+"&types=message.created", nil, 200)
-	if n := len(out["events"].([]any)); n != 6 {
-		t.Fatalf("types=message.created returned %d events, want 6", n)
+	if n := len(out["events"].([]any)); n != 8 {
+		t.Fatalf("types=message.created returned %d events, want 8", n)
 	}
 }
 
@@ -3081,7 +3096,7 @@ func TestEventsExclude(t *testing.T) {
 }
 
 // TestThreadLeave: after `ac leave`, untagged replies in the thread no longer
-// name alice in thread_participants (so a mentions-only watcher stays quiet);
+// name alice in thread_participants (so the default watcher stays quiet);
 // a direct @mention or her own reply puts her back.
 func TestThreadLeave(t *testing.T) {
 	srv, _ := newTestServer(t)
@@ -3148,7 +3163,12 @@ func TestThreadLeave(t *testing.T) {
 // inside a thread it is thread traffic and leave applies.
 func TestThreadLeaveSilencesBroadcastReplies(t *testing.T) {
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
 	rootID := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's topic"}, 201)["id"].(string)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my done line", "thread_root_id": rootID}, 201)
 
@@ -3167,7 +3187,7 @@ func TestThreadLeaveSilencesBroadcastReplies(t *testing.T) {
 	_, cursor := bodies(0)
 
 	// before leaving, a broadcast reply is hers to hear
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 1 @channel", "thread_root_id": rootID}, 201)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 1 @channel", "thread_root_id": rootID}, 201)
 	got, cursor := bodies(cursor)
 	if !got["loud 1 @channel"] {
 		t.Fatalf("before leave, a broadcast reply did not reach her: %v", got)
@@ -3175,8 +3195,8 @@ func TestThreadLeaveSilencesBroadcastReplies(t *testing.T) {
 
 	alice.must("POST", "/api/v1/threads/"+rootID+"/leave", map[string]any{"left": true}, 200)
 	_, cursor = bodies(cursor)
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "quiet", "thread_root_id": rootID}, 201)
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 2 @channel", "thread_root_id": rootID}, 201)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "quiet", "thread_root_id": rootID}, 201)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 2 @channel", "thread_root_id": rootID}, 201)
 	got, cursor = bodies(cursor)
 	if got["quiet"] || got["loud 2 @channel"] {
 		t.Fatalf("a left thread still woke her: %v", got)
@@ -3186,7 +3206,7 @@ func TestThreadLeaveSilencesBroadcastReplies(t *testing.T) {
 	if got, cursor = bodies(cursor); !got["@alice come back"] {
 		t.Fatalf("a direct mention must always get through: %v", got)
 	}
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 3 @channel", "thread_root_id": rootID}, 201)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "loud 3 @channel", "thread_root_id": rootID}, 201)
 	if got, cursor = bodies(cursor); !got["loud 3 @channel"] {
 		t.Fatalf("after the mention pulled her back, the thread went silent: %v", got)
 	}
@@ -3263,7 +3283,12 @@ func TestAgentRosterExpiry(t *testing.T) {
 // the leaver back in) and it is news to nobody (relevant=true skips it).
 func TestThreadLeaveTimelineEntry(t *testing.T) {
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
 	root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's topic"}, 201)
 	rootID := root["id"].(string)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my part", "thread_root_id": rootID}, 201)
@@ -3328,7 +3353,7 @@ func TestThreadLeaveTimelineEntry(t *testing.T) {
 		t.Fatalf("after rejoin: %s", got)
 	}
 	// rejoined: relevant=true hears the thread again
-	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "welcome back", "thread_root_id": rootID}, 201)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "welcome back", "thread_root_id": rootID}, 201)
 	out := alice.must("GET", "/api/v1/events?after="+fmt.Sprint(c0)+"&relevant=true", nil, 200)
 	heard := false
 	for _, raw := range out["events"].([]any) {

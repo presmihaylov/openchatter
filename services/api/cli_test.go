@@ -447,15 +447,20 @@ func TestWatcherTemplateNagsAboutUnackedAsks(t *testing.T) {
 	}
 }
 
-// TestWatcherTemplateHearsOwnThreads: with WATCH empty (no channel heard in
-// full), an untagged reply in a thread alice wrote in must still surface.
-// Before thread_participants rode on the event, the elsewhere rule ate it.
-func TestWatcherTemplateHearsOwnThreads(t *testing.T) {
+// TestWatcherTemplateHearsHumanRepliesInOwnThreads: with WATCH empty (no
+// channel heard in full), a human's untagged reply in a thread alice wrote in
+// surfaces exactly once. An agent's untagged reply and alice's own reply do not.
+func TestWatcherTemplateHearsHumanRepliesInOwnThreads(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
 	}
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
 	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
 	if !strings.Contains(script, `WATCH=""`) {
 		t.Fatal("could not empty WATCH in the template")
@@ -472,21 +477,68 @@ func TestWatcherTemplateHearsOwnThreads(t *testing.T) {
 	}
 	out := runWatcherPosting(t, script, home, func() {
 		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "plain top-level, not for alice"}, 201)
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "untagged follow-up", "thread_root_id": root["id"].(string)}, 201)
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "agent follow-up", "thread_root_id": root["id"].(string)}, 201)
+		alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "own follow-up", "thread_root_id": root["id"].(string)}, 201)
+		human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "human follow-up", "thread_root_id": root["id"].(string)}, 201)
 	})
 	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
 		t.Fatalf("watcher did not start clean:\n%s", out)
 	}
-	if !strings.Contains(out, "REPLY-TO "+root["id"].(string)) || !strings.Contains(out, "untagged follow-up") {
-		t.Fatalf("watcher missed an untagged reply in alice's thread:\n%s", out)
+	if !strings.Contains(out, "REPLY-TO "+root["id"].(string)) || !strings.Contains(out, "human follow-up") {
+		t.Fatalf("watcher missed a human reply in alice's thread:\n%s", out)
+	}
+	if n := strings.Count(out, "REPLY-TO "+root["id"].(string)); n != 1 {
+		t.Fatalf("human reply woke the watcher %d times, want once:\n%s", n, out)
 	}
 	// the ack nudge names the message that tagged you, never the thread root:
 	// an ack on the root would land on the wrong message (task 30, task 32)
 	if !strings.Contains(out, "| ack: ac ack ") || strings.Contains(out, "| ack: ac ack "+root["id"].(string)) {
 		t.Fatalf("REPLY-TO line lacks the ack nudge, or points it at the root:\n%s", out)
 	}
-	if strings.Contains(out, "plain top-level") {
-		t.Fatalf("watcher with WATCH=\"\" leaked a plain top-level message:\n%s", out)
+	for _, quiet := range []string{"plain top-level", "agent follow-up", "own follow-up"} {
+		if strings.Contains(out, quiet) {
+			t.Fatalf("watcher with WATCH=\"\" leaked %q:\n%s", quiet, out)
+		}
+	}
+}
+
+// The human-thread wake is on by default but can be disabled from the env
+// file. Direct mentions remain audible when it is off.
+func TestWatcherTemplateHumanThreadReplyToggle(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("template needs jq")
+	}
+	srv, _ := newTestServer(t)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	root := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my topic"}, 201)
+
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".openchatter"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(home, ".openchatter", "room.alice.env")
+	env := "SERVER=" + srv.URL + "\nTOKEN=" + alice.token + "\nOPENCHATTER_HUMAN_THREAD_REPLIES=0\n"
+	if err := os.WriteFile(envFile, []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := runWatcherPosting(t, script, home, func() {
+		human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "human follow-up disabled", "thread_root_id": root["id"].(string)}, 201)
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice direct still wakes"}, 201)
+	})
+	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
+		t.Fatalf("watcher did not start clean with the toggle off:\n%s", out)
+	}
+	if !strings.Contains(out, "human thread replies off") || !strings.Contains(out, "direct still wakes") {
+		t.Fatalf("toggle scope or direct mention is wrong:\n%s", out)
+	}
+	if strings.Contains(out, "human follow-up disabled") {
+		t.Fatalf("human thread reply woke the watcher with the toggle off:\n%s", out)
 	}
 }
 
@@ -520,8 +572,8 @@ func TestWatcherTemplateDropsReactions(t *testing.T) {
 	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
 		t.Fatalf("watcher did not start clean:\n%s", out)
 	}
-	if !strings.Contains(out, "mode=mentions-only") {
-		t.Fatalf("scope beacon does not say mentions-only:\n%s", out)
+	if !strings.Contains(out, "mode=mentions+human-threads") {
+		t.Fatalf("scope beacon does not name the default human-thread mode:\n%s", out)
 	}
 	if !strings.Contains(out, "after the reaction") {
 		t.Fatalf("watcher missed the mention:\n%s", out)
@@ -602,7 +654,12 @@ func TestWatcherTemplateDropsSystemEntries(t *testing.T) {
 		t.Skip("template needs jq")
 	}
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
 	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
 	root := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "alice's topic"}, 201)
 	rootID := root["id"].(string)
@@ -618,7 +675,7 @@ func TestWatcherTemplateDropsSystemEntries(t *testing.T) {
 	}
 	out := runWatcherPosting(t, script, home, func() {
 		bob.must("POST", "/api/v1/threads/"+rootID+"/leave", map[string]any{"left": true}, 200)
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob is back with a question", "thread_root_id": rootID}, 201)
+		human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "maya is back with a question", "thread_root_id": rootID}, 201)
 	})
 	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
 		t.Fatalf("watcher did not start clean:\n%s", out)

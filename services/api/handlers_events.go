@@ -20,8 +20,8 @@ const (
 // handleEvents returns events after a cursor, long-polling up to wait seconds.
 // With no "after" param it returns the current cursor so clients can start tailing.
 // Filters: types=a,b limits event types; relevant=true keeps only message
-// events that are broadcasts, mention the caller, or belong to threads the
-// caller wrote in. The cursor always advances past filtered-out events.
+// events that are broadcasts, mention the caller, or are human replies in a
+// thread the caller participates in. The cursor always advances past filtered-out events.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, p models.Participant) {
 	q := r.URL.Query()
 
@@ -140,9 +140,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, p models.P
 // eventMessage is the slice of a message payload the relevance filter needs.
 type eventMessage struct {
 	ID           string   `json:"id"`
+	AuthorID     string   `json:"author_id"`
 	ThreadRootID *string  `json:"thread_root_id"`
 	IsBroadcast  bool     `json:"is_broadcast"`
 	Kind         string   `json:"kind"`
+	AuthorKind   string   `json:"author_kind"`
 	Mentions     []string `json:"mentions"`
 }
 
@@ -265,6 +267,9 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 		if m.Kind == "system" {
 			continue
 		}
+		if m.AuthorID == p.ID {
+			continue
+		}
 		if slices.Contains(m.Mentions, p.Name) {
 			kept = append(kept, e)
 			continue
@@ -277,6 +282,12 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 			continue
 		}
 		if m.ThreadRootID != nil {
+			// Humans using relevant=true keep the web client's existing thread
+			// behavior. For an agent, an untagged agent reply is chatter: only a
+			// direct tag above can make it relevant. Unknown kinds stay noisy.
+			if !p.IsHuman && m.AuthorKind == "agent" {
+				continue
+			}
 			if _, seen := pending[*m.ThreadRootID]; !seen {
 				rootIDs = append(rootIDs, *m.ThreadRootID)
 			}

@@ -156,8 +156,11 @@ type Message struct {
 	ThreadRootID *string `json:"thread_root_id,omitempty"`
 	AuthorID     string  `json:"author_id"`
 	AuthorName   string  `json:"author_name"`
-	Body         string  `json:"body"`
-	IsBroadcast  bool    `json:"is_broadcast"`
+	// AuthorKind is derived from the participant row, never from message input.
+	// Watchers use it to distinguish human follow-ups from agent chatter.
+	AuthorKind  string `json:"author_kind"`
+	Body        string `json:"body"`
+	IsBroadcast bool   `json:"is_broadcast"`
 	// Kind is "message" for normal posts, "system" for membership timeline
 	// entries ("joined #x"); system rows skip unread counts, search, threads.
 	Kind        string           `json:"kind"`

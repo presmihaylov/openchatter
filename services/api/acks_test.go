@@ -28,11 +28,16 @@ func ackerNames(m map[string]any) []string {
 	return names
 }
 
-// An ask is a mention or a reply under your own root, and it stays pending
-// until you ack it yourself. Nothing acks on your behalf.
+// An ask is a mention or a human reply under your own root, and it stays
+// pending until you ack it yourself. An agent's untagged reply is not an ask.
 func TestPendingAcksAndAck(t *testing.T) {
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
 
 	if got := pendingIDs(t, alice); len(got) != 0 {
 		t.Fatalf("a fresh participant has pending asks: %v", got)
@@ -43,12 +48,15 @@ func TestPendingAcksAndAck(t *testing.T) {
 		map[string]any{"body": "@alice can you look at this"}, 201)
 	mentionID := mention["id"].(string)
 
-	// alice starts a thread, bob replies under it: also an ask
+	// alice starts a thread. Bob's untagged agent reply is not an ask; Maya's
+	// untagged human reply is.
 	root := alice.must("POST", "/api/v1/channels/general/messages",
 		map[string]any{"body": "alice's topic"}, 201)
 	rootID := root["id"].(string)
-	reply := bob.must("POST", "/api/v1/channels/general/messages",
-		map[string]any{"body": "here is the answer", "thread_root_id": rootID}, 201)
+	bob.must("POST", "/api/v1/channels/general/messages",
+		map[string]any{"body": "agent side note", "thread_root_id": rootID}, 201)
+	reply := human.must("POST", "/api/v1/channels/general/messages",
+		map[string]any{"body": "human answer", "thread_root_id": rootID}, 201)
 	replyID := reply["id"].(string)
 
 	// bob's own root, and alice's own messages, are nobody's ask

@@ -167,7 +167,7 @@ func scanSearchResult(rows pgx.Rows) (SearchResult, error) {
 	var r SearchResult
 	// same order as scanMessage plus trailing score
 	var attJSON, menJSON, repJSON, rxnJSON, ackJSON []byte
-	err := rows.Scan(&r.ID, &r.RoomID, &r.ChannelID, &r.ThreadRootID, &r.AuthorID, &r.AuthorName,
+	err := rows.Scan(&r.ID, &r.RoomID, &r.ChannelID, &r.ThreadRootID, &r.AuthorID, &r.AuthorName, &r.AuthorKind,
 		&r.Body, &r.IsBroadcast, &r.Kind, &r.CreatedAt, &r.EditedAt, &r.ReplyCount, &r.LastReplyAt,
 		&repJSON, &attJSON, &menJSON, &rxnJSON, &ackJSON, &r.Score)
 	if err != nil {
