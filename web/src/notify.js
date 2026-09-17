@@ -1,12 +1,6 @@
-// notify.js: the one place the page tells a person that something failed.
-//
-// Four surfaces, picked by how long the problem lasts and where the person is
-// looking: toast() for a transient failure of one action (with Retry when the
-// same call can succeed later), banner() for a state that stays until it is
-// fixed (session gone, feed down, offline), inlineError() for a form field,
-// and guard() as the render boundary of one region, so a bad message or
-// channel shows a fallback card in that region instead of blanking the room.
-// busy() keeps a mutation button to one request at a time.
+// The one place the page tells a person that something failed: toast() for one
+// action, banner() for a state that stays (session, feed, offline), inlineError()
+// for a form field, guard() as a region's render boundary, busy() for one click at a time.
 import { classify, KIND } from './errors.js';
 
 const byId = (id) => document.getElementById(id);
@@ -168,10 +162,9 @@ const fallbackCard = (label) => {
   return card;
 };
 
-// guard(region, label, fn) runs one render step for a region. A throw, sync
-// or async, is logged and replaced by a fallback card inside that region
-// only; the rest of the page keeps working. Returns fn's value, or undefined
-// when it failed.
+// guard(region, label, fn) runs one render step. A throw, sync or async, is
+// logged and replaced by a fallback card inside that region only; the rest of
+// the page keeps working. Returns fn's value, or undefined when it failed.
 export const guard = (region, label, fn) => {
   const fail = (e) => {
     console.error('render ' + label, e);

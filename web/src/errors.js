@@ -1,11 +1,6 @@
-// One vocabulary for everything that goes wrong between the page and the API.
-// Pure: no DOM, no storage, so it runs under a unit test as it runs in the tab.
-//
-// request() is the single fetch wrapper. It turns every failure, whether a
-// status, a dead network, a timeout, an unreadable body or the Cloudflare
-// Access redirect, into an ApiError with a `kind` and a sentence a person can
-// act on. Callers branch on `kind` (or `status`/`code` for server-defined
-// outcomes) and show `message`; they never show a raw fetch error.
+// One vocabulary for everything that goes wrong between the page and the API:
+// request() turns every failure (status, dead network, timeout, unreadable body,
+// Access redirect) into an ApiError with a `kind` and a sentence a person can act on.
 
 export const KIND = Object.freeze({
   offline: 'offline',            // navigator says there is no network
@@ -153,9 +148,10 @@ export const request = async (path, opts = {}) => {
   let timedOut = false;
   let timer = null;
   if (ctl && timeoutMs > 0) timer = setTimeout(() => { timedOut = true; ctl.abort(); }, timeoutMs);
+  const onAbort = () => ctl.abort();
   if (ctl && opts.signal) {
     if (opts.signal.aborted) ctl.abort();
-    else opts.signal.addEventListener('abort', () => ctl.abort(), { once: true });
+    else opts.signal.addEventListener('abort', onAbort);
   }
   let resp;
   try {
@@ -173,6 +169,7 @@ export const request = async (path, opts = {}) => {
     throw classify(err, { path, timedOut });
   } finally {
     if (timer) clearTimeout(timer);
+    if (ctl && opts.signal) opts.signal.removeEventListener('abort', onAbort);
   }
   if (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400)) {
     throw new ApiError(KIND.access_expired, TEXT[KIND.access_expired], { status: resp.status || 302, path });
@@ -192,8 +189,8 @@ export const request = async (path, opts = {}) => {
   return data;
 };
 
-// backoffDelay grows 1s, 2s, 4s ... up to max, with jitter so a fleet of tabs
-// does not stampede a server that just came back.
+// backoffDelay grows 1s, 2s, 4s ... up to max, then +-jitter so a fleet of
+// tabs does not stampede a server that just came back.
 export const backoffDelay = (attempt, { base = 1000, max = 30000, jitter = 0.2, random = Math.random } = {}) => {
   const exp = Math.min(max, base * Math.pow(2, Math.max(0, attempt - 1)));
   const spread = exp * jitter;

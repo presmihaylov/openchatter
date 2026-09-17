@@ -255,6 +255,17 @@ describe('request', () => {
     ctl.abort();
     expect((await p).kind).toBe(KIND.cancelled);
   });
+
+  it('lets go of a shared caller signal once the request settles', async () => {
+    const ctl = new AbortController();
+    const add = vi.spyOn(ctl.signal, 'addEventListener');
+    const remove = vi.spyOn(ctl.signal, 'removeEventListener');
+    await request('/x', { fetch: fetchWith(reply(200, json({ ok: 1 }))), signal: ctl.signal });
+    await failure(request('/x', { fetch: fetchWith(reply(500, '')), signal: ctl.signal }));
+    expect(add).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(remove.mock.calls[0][1]).toBe(add.mock.calls[0][1]);
+  });
 });
 
 describe('backoffDelay', () => {
