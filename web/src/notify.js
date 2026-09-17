@@ -234,6 +234,7 @@ export const installGlobalHandlers = (win = typeof window === 'undefined' ? null
     if (silent(e)) return;
     console.error('unhandled', ev.reason);
     toast(e.message, { kind: 'error' });
+    ev.preventDefault(); // shown and logged: not an uncaught error any more
   });
   win.addEventListener('offline', () => {
     banner(OFFLINE_BANNER, 'You are offline. Nothing will send until the connection is back.', { kind: 'warn' });

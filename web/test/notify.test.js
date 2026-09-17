@@ -275,6 +275,18 @@ describe('installGlobalHandlers', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
+  it('marks a rejection it toasted as handled, and leaves a silent one alone', () => {
+    installGlobalHandlers(window);
+    const shown = new Event('unhandledrejection', { cancelable: true });
+    shown.reason = new ApiError(KIND.server, 'x');
+    window.dispatchEvent(shown);
+    expect(shown.defaultPrevented).toBe(true);
+    const quiet = new Event('unhandledrejection', { cancelable: true });
+    quiet.reason = new ApiError(KIND.cancelled, 'x');
+    window.dispatchEvent(quiet);
+    expect(quiet.defaultPrevented).toBe(false);
+  });
+
   it('follows offline and online with a banner', () => {
     installGlobalHandlers(window);
     window.dispatchEvent(new Event('offline'));

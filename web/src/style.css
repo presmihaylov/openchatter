@@ -651,7 +651,7 @@ a.chanlink:hover { text-decoration: underline; }
 .toast-action:hover { background: var(--sel); }
 .toast-close { border: 0; background: none; color: inherit; font: inherit; font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; opacity: .7; }
 .toast-close:hover { opacity: 1; }
-#status-banners { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+#status-banners { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 55; /* above the boot splash (50): the boot bar shows through it */ display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .status-banner { display: flex; align-items: center; gap: 12px; max-width: min(640px, calc(100vw - 32px)); padding: 6px 12px 6px 14px; border-radius: 8px; font-size: 13px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); box-shadow: 0 6px 20px var(--shadow); pointer-events: auto; }
 .status-banner.warn { background: var(--mention); }
 .status-banner.error { border-color: var(--danger); background: var(--broadcast); }
