@@ -80,11 +80,9 @@ export const toast = (text, opts = {}) => {
   return handle;
 };
 
-// failToast shows a thrown value as an error toast. `retry` adds a Retry
-// button when the failure is the kind that can pass on a second try; `prefix`
-// names the action ("Could not join") so the sentence says what failed. The
-// raw error still goes to the console: the toast is for the person, the log
-// is for whoever debugs it.
+// failToast shows a thrown value as an error toast; `prefix` names the action,
+// `retry` adds a Retry button when the same call can pass later. The raw error
+// still goes to the console: the toast is for the person, the log for whoever debugs it.
 export const failToast = (err, opts = {}) => {
   const e = classify(err);
   if (silent(e)) return null;
