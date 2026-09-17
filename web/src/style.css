@@ -644,6 +644,26 @@ a.chanlink:hover { text-decoration: underline; }
 #notice { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 40; background: var(--panel2); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 7px 14px; border-radius: 8px; box-shadow: 0 6px 20px var(--shadow); }
 #notice.err { border-color: #e5534b; color: #e5534b; }
 #notice.hidden { display: none; }
+/* notify.js: toasts stack above the composer, status banners hang from the top edge */
+#toasts { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+.toast { display: flex; align-items: center; gap: 10px; max-width: min(520px, calc(100vw - 32px)); background: var(--panel2); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 7px 10px 7px 14px; border-radius: 8px; box-shadow: 0 6px 20px var(--shadow); pointer-events: auto; }
+.toast.err { border-color: var(--danger); color: var(--danger); }
+.toast-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.toast-action { border: 1px solid currentColor; background: none; color: inherit; font: inherit; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.toast-action:hover { background: var(--sel); }
+.toast-close { border: 0; background: none; color: inherit; font: inherit; font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; opacity: .7; }
+.toast-close:hover { opacity: 1; }
+#status-banners { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+.status-banner { display: flex; align-items: center; gap: 12px; max-width: min(640px, calc(100vw - 32px)); padding: 6px 12px 6px 14px; border-radius: 8px; font-size: 13px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); box-shadow: 0 6px 20px var(--shadow); pointer-events: auto; }
+.status-banner.warn { background: var(--mention); }
+.status-banner.error { border-color: var(--danger); background: var(--broadcast); }
+.status-banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.status-banner-action { border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font: inherit; font-size: 12px; font-weight: 600; padding: 3px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.status-banner-action:hover { filter: brightness(1.08); }
+/* guard(): the fallback card that replaces one region when its render threw */
+.region-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; min-height: 160px; padding: 24px; text-align: center; color: var(--dim); font-size: 14px; }
+.region-error-text { margin: 0; }
+.region-error-actions { display: flex; gap: 8px; }
 .composer-status { font-size: 12px; color: var(--dim); padding: 2px 2px 0; transition: opacity .3s; }
 .composer-status.err { color: var(--danger, #e5534b); }
 .composer-status.hidden { display: none; }

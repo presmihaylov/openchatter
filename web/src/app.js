@@ -3,6 +3,7 @@ import { wsAvatarEl } from './wsavatar.js';
 import { avatarImage } from './avatar.js';
 /* OpenChatter human web client — vanilla JS, talks to the same REST API as agents. */
 import { createComposer } from './composer.js';
+import { request } from './errors.js';
 import { emojify, searchEmoji, rememberEmoji, shortcodeOf } from './emoji.js';
 import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fetchWorkspaces, signOut, authApi, noWorkspaceError, inviteErrorText, inviteTokenFrom, wireSlugPreview } from './auth.js';
 
@@ -239,22 +240,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const api = async (path, opts = {}) => {
     const sent = opts.ws || slug; // a late error for a workspace we left must not route
     const headers = authHeaders(opts.headers, opts.ws);
-    if (opts.body && !(opts.body instanceof FormData)) {
-      headers['Content-Type'] = 'application/json';
-      opts = Object.assign({}, opts, { body: JSON.stringify(opts.body) });
-    }
-    const resp = await fetch(path, Object.assign({}, opts, { headers }));
-    let data = null;
-    try { data = await resp.json(); } catch (e) { /* empty body */ }
-    if (!resp.ok) {
-      const err = new Error((data && data.error) || ('HTTP ' + resp.status));
-      err.status = resp.status;
-      err.code = data && data.code;
-      err.reason = data && data.reason;
+    try {
+      return await request(path, { method: opts.method, headers, body: opts.body, timeoutMs: opts.timeoutMs });
+    } catch (err) {
       if (sent === slug || err.code === 'session_invalid') routeAuthError(err);
       throw err;
     }
-    return data;
   };
 
   // ---------- rendering ----------
@@ -2602,7 +2593,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const feedLoop = async () => {
     try {
       const qs = Object.entries(feedCursors).map(([s, c]) => encodeURIComponent(s) + ':' + c).join(',');
-      const out = await api('/api/v1/user/events?wait=25&cursors=' + qs);
+      // the server holds this poll for up to 25s: give it room before our own deadline
+      const out = await api('/api/v1/user/events?wait=25&cursors=' + qs, { timeoutMs: 35000 });
       const before = Object.keys(feedCursors).sort().join(',');
       feedCursors = out.cursors || {};
       const after = Object.keys(feedCursors).sort().join(',');
