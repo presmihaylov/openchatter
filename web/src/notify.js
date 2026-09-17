@@ -1,7 +1,7 @@
 // The one place the page tells a person that something failed: toast() for one
 // action, banner() for a state that stays (session, feed, offline), inlineError()
 // for a form field, guard() as a region's render boundary, busy() for one click at a time.
-import { classify, KIND } from './errors.js';
+import { classify, KIND, textOf } from './errors.js';
 
 const byId = (id) => document.getElementById(id);
 const resolve = (target) => (typeof target === 'string' ? byId(target) : target);
@@ -37,6 +37,10 @@ const toastHost = () => {
 };
 
 const liveToasts = new Map(); // text -> handle, so a repeat updates instead of stacking
+
+// A cancelled call has nothing to say; an expired Access session already has
+// its own bar (accessExpiredBanner), so a toast per failed call would only pile up.
+const silent = (e) => e.kind === KIND.cancelled || e.kind === KIND.access_expired;
 
 // toast(text, {kind: 'info'|'error', action: {label, run}, ttl}) -> {el, dismiss}
 export const toast = (text, opts = {}) => {
@@ -78,10 +82,13 @@ export const toast = (text, opts = {}) => {
 
 // failToast shows a thrown value as an error toast. `retry` adds a Retry
 // button when the failure is the kind that can pass on a second try; `prefix`
-// names the action ("Could not join") so the sentence says what failed.
+// names the action ("Could not join") so the sentence says what failed. The
+// raw error still goes to the console: the toast is for the person, the log
+// is for whoever debugs it.
 export const failToast = (err, opts = {}) => {
   const e = classify(err);
-  if (e.kind === KIND.cancelled) return null;
+  if (silent(e)) return null;
+  console.error(opts.prefix || 'request failed', err);
   const text = opts.prefix ? `${opts.prefix}: ${e.message}` : e.message;
   const action = opts.retry && (e.retryable || opts.alwaysRetry) ? { label: 'Retry', run: opts.retry } : null;
   return toast(text, { kind: 'error', action, ttl: opts.ttl });
@@ -130,6 +137,16 @@ export const hasBanner = (id) => {
   const host = byId('status-banners');
   return !!(host && host.querySelector(`[data-banner="${id}"]`));
 };
+
+const ACCESS_BANNER = 'access';
+
+// accessExpiredBanner: Cloudflare Access wants a fresh login, and only a full
+// page load reaches its login page, so the bar offers exactly that. Stays up
+// until the reload; every later request would only hit the same redirect.
+export const accessExpiredBanner = () => banner(ACCESS_BANNER, textOf(KIND.access_expired), {
+  kind: 'error',
+  action: { label: 'Reload', run: () => location.reload() },
+});
 
 // ---------- inline ----------
 
@@ -216,7 +233,7 @@ export const installGlobalHandlers = (win = typeof window === 'undefined' ? null
   });
   win.addEventListener('unhandledrejection', (ev) => {
     const e = classify(ev.reason);
-    if (e.kind === KIND.cancelled) return;
+    if (silent(e)) return;
     console.error('unhandled', ev.reason);
     toast(e.message, { kind: 'error' });
   });

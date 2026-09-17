@@ -3,7 +3,8 @@ import { wsAvatarEl } from './wsavatar.js';
 import { avatarImage } from './avatar.js';
 /* OpenChatter human web client — vanilla JS, talks to the same REST API as agents. */
 import { createComposer } from './composer.js';
-import { request } from './errors.js';
+import { request, fromStatus, errorText } from './errors.js';
+import { toast, failToast, inlineError, clearInline, accessExpiredBanner } from './notify.js';
 import { emojify, searchEmoji, rememberEmoji, shortcodeOf } from './emoji.js';
 import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fetchWorkspaces, signOut, authApi, noWorkspaceError, inviteErrorText, inviteTokenFrom, wireSlugPreview } from './auth.js';
 
@@ -214,6 +215,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   let authHandled = false;
   const routeAuthError = (e) => {
     if (authHandled) return true;
+    if (e.kind === 'access_expired') {
+      // no request passes until the person signs in to Access again: one bar, and failToast stays quiet
+      authHandled = true;
+      accessExpiredBanner();
+      return true;
+    }
     if (e.status === 401 && e.code === 'session_invalid') {
       authHandled = true;
       onSessionInvalid();
@@ -482,8 +489,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   }
 
   async function ackMessage(msgID) {
-    const out = await api(`/api/v1/messages/${msgID}/ack`, { method: 'POST' });
-    paintAck(msgID, out.acked_by);
+    try {
+      const out = await api(`/api/v1/messages/${msgID}/ack`, { method: 'POST' });
+      paintAck(msgID, out.acked_by);
+    } catch (e) { failToast(e, { prefix: 'Could not acknowledge the message', retry: () => ackMessage(msgID) }); }
   }
 
   // the add-reaction pill: the same smile-plus as the toolbar, tagged for the checks
@@ -571,7 +580,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         : await api(`/api/v1/messages/${m.id}/reactions`, { method: 'POST', body: { emoji } });
       reactionMap[m.id] = out.reactions || [];
       renderReactions(m.id);
-    } catch (e) { notice(e.message, true); }
+    } catch (e) { failToast(e, { prefix: 'Could not update the reaction' }); }
   };
 
   // A small picker: the quick row, then a search box over the whole set.
@@ -802,7 +811,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         try {
           await api(`/api/v1/threads/${root}/subscribe`, { method: 'POST', body: { subscribed: !subscribed } });
           loadThreads();
-        } catch (e) { alert(e.message); }
+        } catch (e) { failToast(e, { prefix: subscribed ? 'Could not unsubscribe' : 'Could not subscribe' }); }
       },
     });
     items.push({
@@ -831,20 +840,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
 
   // small transient pill at the bottom of the message area: copy confirmations
   // and "this permalink went nowhere" notes, neither of which deserve a dialog
-  let noticeTimer = 0;
-  const notice = (text, isErr) => {
-    let el = document.getElementById('notice');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'notice';
-      document.body.appendChild(el);
-    }
-    el.textContent = text;
-    el.classList.toggle('err', !!isErr);
-    el.classList.remove('hidden');
-    clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => el.classList.add('hidden'), 2600);
-  };
+  // notice is the older name for a toast; an error stays longer and can be closed
+  const notice = (text, isErr) => toast(text, { kind: isErr ? 'error' : 'info' });
 
   // A single themed context menu, reused for every right-click target. items is
   // [{label, danger?, run}]; dismisses on pick, click-outside, Esc, scroll, resize.
@@ -912,7 +909,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       try {
         await api(`/api/v1/threads/${t.root_id}/${path}`, { method: 'POST', body });
         loadThreads();
-      } catch (e) { alert(e.message); }
+      } catch (e) { failToast(e, { prefix: 'Could not update the thread' }); }
     };
     // hover-reveal hide (resolve): the thread leaves the sidebar and comes back
     // on its own the next time anyone writes in it or mentions you there
@@ -987,7 +984,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     await queueLayout(async () => {
       try {
         await writeOrder(ids, groupID);
-      } catch (err) { notice(err.message, true); }
+      } catch (err) { failToast(err, { prefix: 'Could not save the channel order' }); }
       await fetchGroups(e);
       renderChannels();
     });
@@ -1066,7 +1063,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     try {
       await api('/api/v1/channels/' + ch.id, { method: 'PATCH', body: { name: name.trim() } });
     } catch (e) {
-      alert(e.code === 'name_taken' ? 'A channel named #' + name.trim().replace(/^#/, '').toLowerCase() + ' already exists.' : e.message);
+      if (e.code === 'name_taken') { toast('A channel named #' + name.trim().replace(/^#/, '').toLowerCase() + ' already exists.', { kind: 'error' }); return; }
+      failToast(e, { prefix: 'Could not rename the channel' });
     }
   };
   $('rename-channel').onclick = () => { if (current) renameChannel(current); };
@@ -1262,7 +1260,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       ch.muted = muted;
       renderChannels();
       notice((muted ? 'Muted #' : 'Unmuted #') + ch.name);
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: (muted ? 'Could not mute #' : 'Could not unmute #') + ch.name }); }
   };
 
   const moveChannel = (ch, groupID) => queueLayout(async () => {
@@ -1270,7 +1268,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       await api('/api/v1/channels/' + ch.id + '/group', { method: 'PUT', body: { group_id: groupID } });
       await fetchGroups();
       renderChannels();
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not move #' + ch.name }); }
   });
 
   const openMoveMenu = (x, y, ch) => {
@@ -1289,7 +1287,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     try {
       const g = await api('/api/v1/channel-groups', { method: 'POST', body: { name: name.trim() } });
       await moveChannel(ch, g.id);
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not create the section' }); }
   };
 
   const renameGroup = async (g) => {
@@ -1300,7 +1298,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         await api('/api/v1/channel-groups/' + g.id, { method: 'PATCH', body: { name: name.trim() } });
         await fetchGroups();
         renderChannels();
-      } catch (e) { alert(e.message); }
+      } catch (e) { failToast(e, { prefix: 'Could not rename the section' }); }
     });
   };
 
@@ -1319,7 +1317,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       await writeOrder(wanted, null);
       await fetchGroups(e);
       renderChannels();
-    } catch (err) { alert(err.message); }
+    } catch (err) { failToast(err, { prefix: 'Could not delete the section' }); }
   });
 
   // Reply bars in the open channel view share the thread tree's unread state.
@@ -1435,7 +1433,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           try {
             await api('/api/v1/participants/' + encodeURIComponent(p.id) + '/reminders/' + encodeURIComponent(r.id), { method: 'DELETE' });
             showReminders(p);
-          } catch (e) { alert(e.message); }
+          } catch (e) { failToast(e, { prefix: 'Could not delete the reminder' }); }
         };
         row.append(text, meta, del);
         box.appendChild(row);
@@ -1511,7 +1509,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           renderParticipants();
         } catch (e) {
           del.disabled = false;
-          alert(e.message);
+          failToast(e, { prefix: 'Could not delete ' + p.name });
         }
       };
     }
@@ -2070,16 +2068,17 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
 
   const downloadAttachment = async (id, name) => {
+    const path = '/api/v1/attachments/' + id;
     try {
-      const resp = await fetch('/api/v1/attachments/' + id, { headers: authHeaders() });
-      if (!resp.ok) throw new Error('download failed (HTTP ' + resp.status + ')');
+      const resp = await fetch(path, { headers: authHeaders() });
+      if (!resp.ok) throw fromStatus(resp.status, null, path);
       const url = URL.createObjectURL(await resp.blob());
       const a = document.createElement('a');
       a.href = url;
       a.download = name || 'attachment';
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not download ' + (name || 'the attachment'), retry: () => downloadAttachment(id, name) }); }
   };
 
   // Uploads arrive as application/octet-stream, so the filename decides what
@@ -2124,13 +2123,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const next = prompt('Edit message:', m.body);
     if (next === null || next.trim() === '' || next === m.body) return;
     try { await api('/api/v1/messages/' + m.id, { method: 'PATCH', body: { body: next } }); }
-    catch (e) { alert(e.message); }
+    catch (e) { failToast(e, { prefix: 'Could not edit the message' }); }
   };
 
   const deleteMessage = async (m) => {
     if (!confirm('Delete this message' + (m.reply_count > 0 ? ' and its thread' : '') + '?')) return;
     try { await api('/api/v1/messages/' + m.id, { method: 'DELETE' }); }
-    catch (e) { alert(e.message); }
+    catch (e) { failToast(e, { prefix: 'Could not delete the message' }); }
   };
 
   // optimistic sends: the placeholder shows instantly, its server echo settles it
@@ -2804,8 +2803,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       setProgress(false);
       // not a member any more, or gone: the full page has the enter and removed views
       if (err.status === 403 || err.status === 404) { location.href = '/w/' + encodeURIComponent(target); return; }
-      notice('Could not open the workspace', true);
-      console.error('switch', err);
+      failToast(err, { prefix: 'Could not open the workspace' });
       return;
     }
     if (seq !== switchSeq) return; // a later click won
@@ -3031,7 +3029,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       try {
         const out = await api('/api/v1/user/workspace-order', { method: 'PATCH', body: { order: ids } });
         if (out && out.workspaces) paintRailBadges(out.workspaces);
-      } catch (e) { console.error('rail order', e); }
+      } catch (e) { failToast(e, { prefix: 'Could not save the workspace order', retry: saveRailOrder }); }
     });
     return railSaveChain;
   };
@@ -3098,7 +3096,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       paintRailBadges(railRooms);
       if (room && ws.slug === room.slug) mountMenu();
       notice((out.muted ? 'Muted ' : 'Unmuted ') + ws.name);
-    } catch (e) { console.error('workspace mute', e); }
+    } catch (e) { failToast(e, { prefix: (muted ? 'Could not mute ' : 'Could not unmute ') + ws.name }); }
   };
   // the mark's context menu: move up, move down, mute or unmute
   const closeRailCtx = () => { $('rail-ctx').classList.add('hidden'); };
@@ -3210,8 +3208,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     ev.preventDefault();
     const text = composerBox.getMarkdown().trim();
     if ((!text && !pendingAtt.main) || !current) return;
+    clearInline('composer-error');
     composerBox.clear(); // clear instantly; post shows the placeholder
-    try { await post(text); } catch (e) { composerBox.setMarkdown(text); alert(e.message); }
+    try { await post(text); } catch (e) { composerBox.setMarkdown(text); inlineError('composer-error', 'Not sent: ' + errorText(e)); }
   });
 
   $('thread-composer').addEventListener('submit', async (ev) => {
@@ -3219,8 +3218,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const text = threadBox.getMarkdown().trim();
     if ((!text && !pendingAtt.thread) || !openThreadRoot) return;
     const root = openThreadRoot;
+    clearInline('thread-composer-error');
     threadBox.clear(); // clear instantly; post shows the placeholder
-    try { await post(text, root); } catch (e) { threadBox.setMarkdown(text); alert(e.message); }
+    try { await post(text, root); } catch (e) { threadBox.setMarkdown(text); inlineError('thread-composer-error', 'Not sent: ' + errorText(e)); }
   });
 
   // ---------- slash commands: /invite, /join, /leave, /hide ----------
@@ -3268,7 +3268,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       await refreshRoom();
       const joined = channels.find((c) => c.id === pub.id);
       if (joined) await selectChannel(joined);
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not join #' + name }); }
   };
 
   // the send button is muted while the editor is empty (Maya, msg 42e8199f)
@@ -3277,7 +3277,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     mount: $('composer-mount'), id: 'composer-input',
     placeholder: 'Message… (@name to mention, #channel to link, markdown ok)',
     onSubmit: () => $('composer').requestSubmit(),
-    onChange: () => syncEmpty($('composer'), composerBox)(),
+    onChange: () => { syncEmpty($('composer'), composerBox)(); clearInline('composer-error'); },
     getMentionOptions: mentionOptions,
     getMeName: () => (me ? me.name : ''),
     getChannelOptions: channelOptions,
@@ -3289,7 +3289,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     mount: $('thread-mount'), id: 'thread-input',
     placeholder: 'Reply…',
     onSubmit: () => $('thread-composer').requestSubmit(),
-    onChange: () => syncEmpty($('thread-composer'), threadBox)(),
+    onChange: () => { syncEmpty($('thread-composer'), threadBox)(); clearInline('thread-composer-error'); },
     getMentionOptions: mentionOptions,
     getMeName: () => (me ? me.name : ''),
     getChannelOptions: channelOptions,
@@ -3456,7 +3456,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
             try {
               await api('/api/v1/channels/' + current.id + '/members/' + p.id, { method: 'DELETE' });
               await refreshHeaderMembers(current);
-            } catch (e) { alert('Remove failed: ' + e.message); }
+            } catch (e) { failToast(e, { prefix: 'Could not remove ' + p.name }); }
           };
         }
         list.appendChild(memberRow(p, btn));
@@ -3481,7 +3481,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           await api('/api/v1/channels/' + current.id + '/members', { method: 'POST', body: { participant: p.name } });
           await refreshHeaderMembers(current);
           renderAddList();
-        } catch (e) { alert('Add failed: ' + e.message); }
+        } catch (e) { failToast(e, { prefix: 'Could not add ' + p.name }); }
       };
       box.appendChild(memberRow(p, btn));
     }
@@ -4063,7 +4063,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (!name) return;
     const priv = confirm('Make this channel private? Private channels are invite-only and hidden from browse.');
     try { await api('/api/v1/channels', { method: 'POST', body: { name: name.trim(), private: priv } }); }
-    catch (e) { alert(e.message); }
+    catch (e) { failToast(e, { prefix: 'Could not create the channel' }); }
   };
 
   // Add a participant to a private channel (any member can). The server resolves
@@ -4073,7 +4073,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (!who) return;
     try {
       await api('/api/v1/channels/' + ch.id + '/members', { method: 'POST', body: { participant: who.trim() } });
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not add ' + who.trim() }); }
   };
 
   // One-way by design: server rejects private -> public, so no undo path here.
@@ -4085,7 +4085,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         current = channels.find((c) => c.id === ch.id) || current;
         setChannelTitle(current);
       }
-    } catch (e) { alert('Make public failed: ' + e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not make #' + ch.name + ' public' }); }
   };
   const makePrivate = async (ch) => {
     if (!confirm('Make #' + ch.name + ' private? Current members stay, it leaves browse, and joining becomes invite-only. This cannot be undone.')) return;
@@ -4096,7 +4096,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         current = channels.find((c) => c.id === ch.id) || current;
         setChannelTitle(current);
       }
-    } catch (e) { alert('Make private failed: ' + e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not make #' + ch.name + ' private' }); }
   };
 
   // Browse view: the whole public channel map. Channels you are already in are
@@ -4142,7 +4142,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           const joined = channels.find((c) => c.id === ch.id);
           if (joined) await selectChannel(joined);
           await openBrowse(); // refresh: the joined channel flips to a member row
-        } catch (e) { alert(e.message); join.disabled = false; }
+        } catch (e) { failToast(e, { prefix: 'Could not join #' + ch.name }); join.disabled = false; }
       };
       action.appendChild(join);
       box.appendChild(row);
@@ -4154,7 +4154,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const out = await api('/api/v1/channels/browse');
       renderBrowse(out.channels || []);
       $('browse-modal').classList.remove('hidden');
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not load the channel list', retry: openBrowse }); }
   };
   const closeBrowse = () => $('browse-modal').classList.add('hidden');
 
@@ -4171,7 +4171,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       if (current && current.id === ch.id) {
         await selectChannel(channels.find((c) => c.name === 'general') || channels[0]);
       }
-    } catch (e) { alert(e.message); }
+    } catch (e) { failToast(e, { prefix: 'Could not leave #' + ch.name }); }
   };
 
   const showPendingAttachment = (which, file) => {
@@ -4212,7 +4212,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       if (!stillHere()) return;
       pendingAtt[which] = uploaded;
       showPendingAttachment(which, file);
-    } catch (e) { if (stillHere()) alert(e.message); }
+    } catch (e) { if (stillHere()) failToast(e, { prefix: 'Could not upload ' + file.name, retry: () => uploadPending(which, file) }); }
   };
 
   for (const which of ['main', 'thread']) {

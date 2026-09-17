@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, DEFAULT_TIMEOUT_MS, KIND, UPLOAD_TIMEOUT_MS, backoffDelay, classify, errorText, fromStatus, kindOfStatus, request } from '../src/errors.js';
+import { ApiError, DEFAULT_TIMEOUT_MS, KIND, UPLOAD_TIMEOUT_MS, backoffDelay, classify, errorText, fromStatus, kindOfStatus, request, textOf } from '../src/errors.js';
 
 // A Response the way fetch hands it over: status, headers, a body read once.
 const reply = (status, body, headers = {}) => {
@@ -112,6 +112,11 @@ describe('classify', () => {
     expect(e.message).toBe('Something went wrong. Try again.');
     expect(errorText('some string')).toBe('Something went wrong. Try again.');
     expect(errorText(undefined)).toBe('Something went wrong. Try again.');
+  });
+
+  it('names the fixed sentence of a kind, and the unknown one for a bad kind', () => {
+    expect(textOf(KIND.access_expired)).toMatch(/Cloudflare Access session has expired/);
+    expect(textOf('nope')).toBe('Something went wrong. Try again.');
   });
 });
 

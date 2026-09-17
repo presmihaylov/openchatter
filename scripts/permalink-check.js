@@ -62,7 +62,7 @@ const post = (token, body, root) =>
   assert(first === 'Copy link to message', 'first menu item is ' + JSON.stringify(first));
   await page.evaluate(() => [...document.querySelectorAll('.context-menu .ctx-item')]
     .find((b) => b.textContent === 'Copy link to message').click());
-  await page.waitForFunction(() => document.querySelector('#notice:not(.hidden)') !== null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#toasts .toast') !== null, { timeout: 5000 });
   const link = await page.evaluate(() => navigator.clipboard.readText());
   assert(link.endsWith('/r/' + slug + '/c/general/m/' + recent.id), 'copied link is ' + link);
 
@@ -98,10 +98,8 @@ const post = (token, body, root) =>
   // 5. a deleted message: channel view survives, with a note
   await api('/api/v1/messages/' + doomed.id, { method: 'DELETE', token: bot.token });
   await page.goto(SERVER + '/r/' + slug + '/c/general/m/' + doomed.id, { waitUntil: 'networkidle2' });
-  await page.waitForFunction(() => {
-    const n = document.getElementById('notice');
-    return n && !n.classList.contains('hidden') && /unavailable/i.test(n.textContent);
-  }, { timeout: 15000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('#toasts .toast-text')]
+    .some((n) => /unavailable/i.test(n.textContent)), { timeout: 15000 });
   const alive = await page.evaluate(() => document.querySelectorAll('#messages .msg').length > 0
     && !document.getElementById('chat-view').classList.contains('hidden'));
   assert(alive, 'the channel view did not survive a dead permalink');

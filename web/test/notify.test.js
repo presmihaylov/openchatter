@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, KIND } from '../src/errors.js';
 import {
-  banner, busy, clearBanner, clearInline, failToast, guard, hasBanner, inlineError,
+  accessExpiredBanner, banner, busy, clearBanner, clearInline, failToast, guard, hasBanner, inlineError,
   installGlobalHandlers, resetForTest, toast,
 } from '../src/notify.js';
 
@@ -75,10 +75,15 @@ describe('toast', () => {
 });
 
 describe('failToast', () => {
-  it('shows the classified sentence with a prefix', () => {
-    failToast(new TypeError('Failed to fetch'), { prefix: 'Could not join' });
+  let spy;
+  beforeEach(() => { spy = vi.spyOn(console, 'error').mockImplementation(() => {}); });
+
+  it('shows the classified sentence with a prefix and logs the raw error', () => {
+    const raw = new TypeError('Failed to fetch');
+    failToast(raw, { prefix: 'Could not join' });
     expect(toastTexts()[0]).toMatch(/^Could not join: /);
     expect(toastTexts()[0]).not.toMatch(/Failed to fetch/);
+    expect(spy).toHaveBeenCalledWith('Could not join', raw);
   });
 
   it('offers Retry only for a retryable failure unless forced', () => {
@@ -93,9 +98,11 @@ describe('failToast', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('shows nothing for a cancelled request', () => {
+  it('shows nothing for a cancelled request or an expired Access session', () => {
     expect(failToast(new ApiError(KIND.cancelled, 'x'))).toBeNull();
+    expect(failToast(new ApiError(KIND.access_expired, 'x'), { prefix: 'Could not send' })).toBeNull();
     expect(toasts()).toHaveLength(0);
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 
@@ -124,6 +131,28 @@ describe('banner', () => {
     clearBanner('offline');
     expect(document.body.classList.contains('has-status-banner')).toBe(false);
     clearBanner('never-there');
+  });
+});
+
+describe('accessExpiredBanner', () => {
+  it('keeps one error bar whose only action is a reload', () => {
+    const reload = vi.fn();
+    const orig = window.location;
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
+    try {
+      accessExpiredBanner();
+      accessExpiredBanner();
+      expect(banners()).toHaveLength(1);
+      expect(hasBanner('access')).toBe(true);
+      expect(banners()[0].classList.contains('error')).toBe(true);
+      expect(banners()[0].textContent).toMatch(/Cloudflare Access session has expired/);
+      const btn = banners()[0].querySelector('.status-banner-action');
+      expect(btn.textContent).toBe('Reload');
+      btn.click();
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: orig });
+    }
   });
 });
 
@@ -237,9 +266,11 @@ describe('installGlobalHandlers', () => {
       'Something went wrong. Reload the page if it keeps happening.',
       'The server is unavailable right now.',
     ]);
-    const quiet = new Event('unhandledrejection');
-    quiet.reason = new ApiError(KIND.cancelled, 'x');
-    window.dispatchEvent(quiet);
+    for (const kind of [KIND.cancelled, KIND.access_expired]) {
+      const quiet = new Event('unhandledrejection');
+      quiet.reason = new ApiError(kind, 'x');
+      window.dispatchEvent(quiet);
+    }
     expect(toasts()).toHaveLength(2);
     expect(spy).toHaveBeenCalledTimes(2);
   });
