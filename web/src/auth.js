@@ -2,6 +2,7 @@ import { ICON } from './icons.js';
 import { wsAvatarEl } from './wsavatar.js';
 import { isFleetRoom } from './fleet.js';
 import { avatarImage } from './avatar.js';
+import { request as apiRequest } from './errors.js';
 /* Account pages (/login, /register, /settings) and the password banner.
    /settings is the one settings place: a Workspace tab and a Personal tab.
    The session token is a human's only browser identity; agents keep act_ tokens. */
@@ -64,23 +65,14 @@ export const onSessionInvalid = () => {
 
 const request = async (apiPath, opts = {}, extra = {}) => {
   const headers = Object.assign({}, extra);
-  const multipart = opts.body instanceof FormData;
-  if (!multipart) headers['Content-Type'] = 'application/json';
   const tok = sessionToken();
   if (tok) headers['Authorization'] = 'Bearer ' + tok;
-  const resp = await fetch(apiPath, {
-    method: opts.method || 'GET',
-    headers,
-    body: multipart ? opts.body : (opts.body ? JSON.stringify(opts.body) : undefined),
-  });
-  let data = null;
-  try { data = await resp.json(); } catch (e) { /* 204 */ }
-  if (resp.ok) return data;
-  const err = new Error((data && data.error) || ('HTTP ' + resp.status));
-  err.status = resp.status;
-  err.code = data && data.code;
-  if (resp.status === 401 && err.code === 'session_invalid') onSessionInvalid();
-  throw err;
+  try {
+    return await apiRequest(apiPath, { method: opts.method, headers, body: opts.body });
+  } catch (err) {
+    if (err.status === 401 && err.code === 'session_invalid') onSessionInvalid();
+    throw err;
+  }
 };
 export const authApi = (apiPath, opts) => request(apiPath, opts);
 // the session names a workspace through X-Workspace-Slug: how /settings reaches
