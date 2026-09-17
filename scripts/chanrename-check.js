@@ -83,18 +83,17 @@ let pages = [];
   await admin.hover('#channel-header');
   step = '2 shot';
   await admin.screenshot({ path: path.join(OUT, 'chanrename-header.png') });
-  // window.prompt / alert are stubbed in-page: a native dialog blocks headless Chrome
+  // window.prompt is stubbed in-page: a native dialog blocks headless Chrome
   step = '2 stub';
   await admin.evaluate(() => {
-    window.__answer = 'taken'; window.__alerts = [];
+    window.__answer = 'taken';
     window.prompt = () => window.__answer;
-    window.alert = (m) => { window.__alerts.push(m); };
   });
   step = '2 click';
   await admin.click('#rename-channel');
-  step = '2 alert';
-  await admin.waitForFunction(() => window.__alerts.length > 0, { polling: 200, timeout: 5000 });
-  const refused = await admin.evaluate(() => window.__alerts[0]);
+  step = '2 toast';
+  await admin.waitForFunction(() => document.querySelector('#toasts .toast.err') !== null, { polling: 200, timeout: 5000 });
+  const refused = await admin.evaluate(() => document.querySelector('#toasts .toast.err .toast-text').textContent);
   if (!/already exists/.test(refused)) throw new Error('taken name not refused: ' + refused);
 
   // 3. rename to Ops-2 (normalized to ops-2): the admin's own tab follows

@@ -88,10 +88,8 @@ const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
   await page.type('#composer-input', 'hey @mentionbot ');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => {
-    const n = document.getElementById('notice');
-    return n && !n.classList.contains('hidden') && /mentionbot/.test(n.textContent);
-  }, { timeout: 8000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('#toasts .toast-text')]
+    .some((n) => /mentionbot/.test(n.textContent)), { timeout: 8000 });
 
   await page.screenshot({ path: (process.env.OUT || 'tmp') + '/mention-warning.png' });
 

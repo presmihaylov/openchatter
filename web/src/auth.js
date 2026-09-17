@@ -3,6 +3,7 @@ import { wsAvatarEl } from './wsavatar.js';
 import { isFleetRoom } from './fleet.js';
 import { avatarImage } from './avatar.js';
 import { request as apiRequest } from './errors.js';
+import { failToast, accessExpiredBanner } from './notify.js';
 /* Account pages (/login, /register, /settings) and the password banner.
    /settings is the one settings place: a Workspace tab and a Personal tab.
    The session token is a human's only browser identity; agents keep act_ tokens. */
@@ -71,6 +72,7 @@ const request = async (apiPath, opts = {}, extra = {}) => {
     return await apiRequest(apiPath, { method: opts.method, headers, body: opts.body });
   } catch (err) {
     if (err.status === 401 && err.code === 'session_invalid') onSessionInvalid();
+    if (err.kind === 'access_expired') accessExpiredBanner();
     throw err;
   }
 };
@@ -399,11 +401,11 @@ const workspaceTab = async (slug) => {
     if (!file) return;
     const fd = new FormData();
     fd.append('file', file);
-    try { room = await wsApi(slug, '/api/v1/room/avatar', { method: 'POST', body: fd }); paintWsAvatar(); } catch (e) { alert(e.message); }
+    try { room = await wsApi(slug, '/api/v1/room/avatar', { method: 'POST', body: fd }); paintWsAvatar(); } catch (e) { failToast(e, { prefix: 'Could not upload the workspace avatar' }); }
     $('ws-avatar-input').value = '';
   });
   $('ws-avatar-remove').onclick = async () => {
-    try { room = await wsApi(slug, '/api/v1/room/avatar', { method: 'DELETE' }); paintWsAvatar(); } catch (e) { alert(e.message); }
+    try { room = await wsApi(slug, '/api/v1/room/avatar', { method: 'DELETE' }); paintWsAvatar(); } catch (e) { failToast(e, { prefix: 'Could not remove the workspace avatar' }); }
   };
   $('ws-name').value = out.room.name;
   $('ws-name').disabled = !admin;
@@ -679,11 +681,11 @@ const personalWorkspaceBits = async (slug, roomName) => {
     if (!file) return;
     const fd = new FormData();
     fd.append('file', file);
-    try { me = await wsApi(slug, '/api/v1/me/avatar', { method: 'POST', body: fd }); await paintAvatar(); } catch (e) { alert(e.message); }
+    try { me = await wsApi(slug, '/api/v1/me/avatar', { method: 'POST', body: fd }); await paintAvatar(); } catch (e) { failToast(e, { prefix: 'Could not upload the avatar' }); }
     $('avatar-input').value = '';
   });
   $('avatar-remove').onclick = async () => {
-    try { me = await wsApi(slug, '/api/v1/me/avatar', { method: 'DELETE' }); await paintAvatar(); } catch (e) { alert(e.message); }
+    try { me = await wsApi(slug, '/api/v1/me/avatar', { method: 'DELETE' }); await paintAvatar(); } catch (e) { failToast(e, { prefix: 'Could not remove the avatar' }); }
   };
 
   let prefs = { enabled: true, sound: true, archive_after_secs: 3600 };
@@ -710,7 +712,7 @@ const personalWorkspaceBits = async (slug, roomName) => {
     paintPrefs();
   };
   const save = async (patch) => {
-    try { prefs = await wsApi(slug, '/api/v1/me/notifications', { method: 'PATCH', body: patch }); } catch (e) { alert(e.message); }
+    try { prefs = await wsApi(slug, '/api/v1/me/notifications', { method: 'PATCH', body: patch }); } catch (e) { failToast(e, { prefix: 'Could not save the notification settings' }); }
     paintPrefs();
   };
   $('notify-enabled').onchange = async (ev) => {

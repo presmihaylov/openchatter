@@ -80,11 +80,16 @@ const countWith = (page, text) => page.evaluate((t) => {
   const FAIL = 'doomed message ' + slug.slice(0, 6);
   await page.focus('#composer-input');
   await page.type('#composer-input', FAIL);
-  page.once('dialog', (d) => d.dismiss().catch(() => {})); // the alert()
   await page.keyboard.press('Enter');
   await page.waitForFunction((t) => document.querySelector('#composer-input').value === t, { timeout: 6000 }, FAIL);
   const after = await countWith(page, FAIL);
   if (after.total !== 0) throw new Error('failed send should leave no message node, got ' + JSON.stringify(after));
+  // the reason sits under the box, not in a dialog, and the next keystroke clears it
+  const note = await page.$eval('#composer-error', (el) => ({ hidden: el.classList.contains('hidden'), text: el.textContent }));
+  if (note.hidden || !/^Not sent: /.test(note.text)) throw new Error('failed send should explain itself under the composer, got ' + JSON.stringify(note));
+  await page.type('#composer-input', '!');
+  const noteGone = await page.$eval('#composer-error', (el) => el.classList.contains('hidden'));
+  if (!noteGone) throw new Error('typing should clear the send error');
 
   await browser.close();
   if (!process.exitCode) console.log('OPTIMISTIC_CHECK_OK');

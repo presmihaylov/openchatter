@@ -103,7 +103,7 @@ const menuLabels = (page) => page.$$eval('.context-menu .ctx-item', (bs) => bs.m
   labels = await menuLabels(page);
   assert(!labels.includes('Reply in thread'), 'a reply must not offer Reply in thread: ' + JSON.stringify(labels));
   await page.evaluate(() => [...document.querySelectorAll('.context-menu .ctx-item')].find((b) => b.textContent === 'Copy link to message').click());
-  await page.waitForFunction(() => document.querySelector('#notice:not(.hidden)') !== null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#toasts .toast') !== null, { timeout: 5000 });
   const link = await page.evaluate(() => navigator.clipboard.readText());
   assert(link.endsWith(`/r/${slug}/c/general/t/${root.id}/m/${reply.id}`), 'reply link is ' + link);
   await page.goto(link, { waitUntil: 'networkidle2' });

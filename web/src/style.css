@@ -619,6 +619,7 @@ a.chanlink:hover { text-decoration: underline; }
 
 /* composers */
 #composer, #thread-composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 20px 12px; border-top: 1px solid var(--border); }
+.composer-error { margin: 0; padding: 0 4px; font-size: 12px; }
 /* one unit (Maya, msg 42e8199f): editor on top, the action bar inside the same rounded border;
    the editor grows upward to 40vh, the actions stay pinned at the bottom */
 .composer-main { display: flex; flex-direction: column; position: relative; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; transition: border-color .15s, box-shadow .15s; }
@@ -641,9 +642,6 @@ a.chanlink:hover { text-decoration: underline; }
 .slash-hint { margin-left: auto; color: var(--dim); font-size: 11px; padding-left: 16px; }
 .mention-opt.sel .slash-args, .mention-opt.sel .slash-hint, .mention-opt:hover .slash-args, .mention-opt:hover .slash-hint { color: rgba(255,255,255,.75); }
 /* transient pill: copy confirmations and dead-permalink notes */
-#notice { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 40; background: var(--panel2); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 7px 14px; border-radius: 8px; box-shadow: 0 6px 20px var(--shadow); }
-#notice.err { border-color: #e5534b; color: #e5534b; }
-#notice.hidden { display: none; }
 /* notify.js: toasts stack above the composer, status banners hang from the top edge */
 #toasts { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { display: flex; align-items: center; gap: 10px; max-width: min(520px, calc(100vw - 32px)); background: var(--panel2); border: 1px solid var(--border); color: var(--text); font-size: 13px; padding: 7px 10px 7px 14px; border-radius: 8px; box-shadow: 0 6px 20px var(--shadow); pointer-events: auto; }

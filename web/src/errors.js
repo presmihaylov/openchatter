@@ -115,6 +115,9 @@ export const classify = (err, ctx = {}) => {
 // errorText is the one sentence to show for any thrown value.
 export const errorText = (err) => classify(err).message;
 
+// textOf is the fixed sentence for a kind, for a surface that names the failure itself.
+export const textOf = (kind) => TEXT[kind] || TEXT[KIND.unknown];
+
 // readBody parses what came back without trusting the headers: a proxy error
 // page says text/html with a 502, an empty 204 has no body, a JSON body may
 // arrive without its content-type from a misconfigured front.
