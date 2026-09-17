@@ -3,8 +3,8 @@ import { wsAvatarEl } from './wsavatar.js';
 import { avatarImage } from './avatar.js';
 /* OpenChatter human web client — vanilla JS, talks to the same REST API as agents. */
 import { createComposer } from './composer.js';
-import { request, fromStatus, errorText } from './errors.js';
-import { toast, failToast, inlineError, clearInline, accessExpiredBanner } from './notify.js';
+import { request, fromStatus, errorText, backoffDelay } from './errors.js';
+import { toast, failToast, inlineError, clearInline, accessExpiredBanner, banner, clearBanner, guard, busy } from './notify.js';
 import { emojify, searchEmoji, rememberEmoji, shortcodeOf } from './emoji.js';
 import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fetchWorkspaces, signOut, authApi, noWorkspaceError, inviteErrorText, inviteTokenFrom, wireSlugPreview } from './auth.js';
 
@@ -171,6 +171,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // endpoint but never the slot: a file staged in one composer must not ride
   // out on the other's send.
   const pendingAtt = { main: null, thread: null };
+  const pendingFile = { main: null, thread: null }; // the File behind pendingAtt, for the chip's preview
   const pendingAttSeq = { main: 0, thread: 0 };
   const pendingPreviewURL = { main: null, thread: null };
   const attachEls = (which) => (which === 'thread'
@@ -179,6 +180,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const clearPendingAttachment = (which) => {
     pendingAttSeq[which]++;
     pendingAtt[which] = null;
+    pendingFile[which] = null;
     if (pendingPreviewURL[which]) {
       URL.revokeObjectURL(pendingPreviewURL[which]);
       pendingPreviewURL[which] = null;
@@ -189,6 +191,20 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   };
   const clearThreadAttachment = () => clearPendingAttachment('thread');
   const clearMainAttachment = () => clearPendingAttachment('main');
+  // a send takes the chip with it; the failed send hands it back through
+  // restorePendingAttachment, unless a newer file was staged meanwhile
+  const takePendingAttachment = (which) => {
+    const staged = pendingAtt[which] ? { att: pendingAtt[which], file: pendingFile[which] } : null;
+    clearPendingAttachment(which);
+    if (staged) staged.seq = pendingAttSeq[which];
+    return staged;
+  };
+  const restorePendingAttachment = (which, staged) => {
+    if (!staged || pendingAttSeq[which] !== staged.seq || pendingAtt[which]) return;
+    pendingAtt[which] = staged.att;
+    pendingFile[which] = staged.file;
+    showPendingAttachment(which, staged.file);
+  };
 
   // One header builder for every fetch. The login session is the only browser
   // identity; it names its workspace through X-Workspace-Slug on room pages.
@@ -765,7 +781,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         const r = btn.getBoundingClientRect();
         openReactionPicker(r.left, r.bottom + 4, m);
       }
-      if (act === 'ack') ackMessage(m.id);
+      if (act === 'ack') busy(btn, () => ackMessage(m.id));
       if (act === 'thread') openThread(m.thread_root_id || m.id);
       if (act === 'edit') editMessage(m);
       if (act === 'delete') deleteMessage(m);
@@ -1162,7 +1178,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     return known.concat(loose.filter((ch) => !ungrouped.includes(ch.id)));
   };
 
-  const renderChannels = () => {
+  const renderChannels = () => guard('channel-list', 'channel list', paintChannels);
+  const paintChannels = () => {
     setTitle(); // the open room's channel state is half of the tab badge
     const ul = $('channel-list');
     ul.innerHTML = '';
@@ -1428,13 +1445,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         del.className = 'rem-delete';
         del.title = 'Delete this reminder';
         del.innerHTML = ICON.x;
-        del.onclick = async () => {
+        del.onclick = () => busy(del, async () => {
           if (!confirm('Delete this reminder?\n\n' + r.text)) return;
           try {
             await api('/api/v1/participants/' + encodeURIComponent(p.id) + '/reminders/' + encodeURIComponent(r.id), { method: 'DELETE' });
             showReminders(p);
           } catch (e) { failToast(e, { prefix: 'Could not delete the reminder' }); }
-        };
+        });
         row.append(text, meta, del);
         box.appendChild(row);
       });
@@ -1536,7 +1553,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // still shows a hidden-agent count and rolls up a glow if any hidden agent is
   // online, so no presence signal is lost by collapsing. Ownerless agents (or
   // ones whose owner is not a visible human) group under "unowned agents".
-  const renderParticipants = () => {
+  const renderParticipants = () => guard('participant-list', 'member list', paintParticipants);
+  const paintParticipants = () => {
     const ul = $('participant-list');
     ul.innerHTML = '';
     const humans = participants.filter((p) => p.is_human);
@@ -1884,7 +1902,8 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     });
   };
 
-  const renderMessages = (list, ch) => {
+  const renderMessages = (list, ch) => guard('messages', 'messages', () => paintMessages(list, ch));
+  const paintMessages = (list, ch) => {
     const box = $('messages');
     box.innerHTML = '';
     // "new messages" divider goes where unread starts; join time is the
@@ -2059,11 +2078,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     if (changed) renderChannels(); // move the active highlight to this thread leaf
     $('thread-panel').classList.remove('hidden');
     syncURL(changed && !fromURL);
-    const box = $('thread-messages');
-    box.innerHTML = '';
-    out.messages.forEach((m) => box.appendChild(msgEl(m, true)));
-    syncDateDividers(box);
-    box.scrollTop = box.scrollHeight;
+    guard('thread-messages', 'thread', () => {
+      const box = $('thread-messages');
+      box.innerHTML = '';
+      out.messages.forEach((m) => box.appendChild(msgEl(m, true)));
+      syncDateDividers(box);
+      box.scrollTop = box.scrollHeight;
+    });
     markThreadRead(rootID);
   };
 
@@ -2200,7 +2221,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     } else if (rootID && rootID === openThreadRoot) {
       const box = $('thread-messages'); box.appendChild(node); syncDateDividers(box); box.scrollTop = box.scrollHeight;
     }
-    if (att) clearPendingAttachment(which);
+    const staged = att ? takePendingAttachment(which) : null;
 
     try {
       const sent = await api(`/api/v1/channels/${channelID}/messages`, { method: 'POST', body: payload, ws: workspace });
@@ -2213,6 +2234,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const box = node.parentElement;
       node.remove(); // roll back the placeholder; caller restores the draft
       if (box) syncDateDividers(box); // drop the day marker the placeholder opened
+      restorePendingAttachment(which, staged);
       throw e;
     }
   };
@@ -2589,11 +2611,34 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // through applyEvent, the rest into the store. The cursor set is the
   // membership; a change means a workspace was joined or left elsewhere.
   let feedCursors = {};
+  // consecutive failed polls; the bar goes up on the second one, since a single
+  // dropped poll happens on every server restart and heals itself
+  let feedFailures = 0;
+  let feedWake = null; // cuts the current backoff short: the bar's Retry now
+  const FEED_BANNER = 'feed';
+  const feedSleep = (ms) => new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    feedWake = () => { clearTimeout(t); resolve(); };
+  }).then(() => { feedWake = null; });
+  const feedDown = (e) => {
+    if (e.kind === 'offline') return; // the offline bar already says it
+    banner(FEED_BANNER, 'Lost the live connection. Reconnecting\u2026', {
+      kind: 'warn',
+      action: { label: 'Retry now', run: () => { if (feedWake) feedWake(); } },
+    });
+  };
   const feedLoop = async () => {
     try {
       const qs = Object.entries(feedCursors).map(([s, c]) => encodeURIComponent(s) + ':' + c).join(',');
       // the server holds this poll for up to 25s: give it room before our own deadline
       const out = await api('/api/v1/user/events?wait=25&cursors=' + qs, { timeoutMs: 35000 });
+      if (feedFailures) {
+        // the cursor replays every event we missed, but a request of our own may
+        // have failed meanwhile: one room snapshot puts the sidebar right
+        feedFailures = 0;
+        clearBanner(FEED_BANNER);
+        refreshRoom().catch((err) => failToast(err, { prefix: 'Could not refresh the workspace', retry: refreshRoom }));
+      }
       const before = Object.keys(feedCursors).sort().join(',');
       feedCursors = out.cursors || {};
       const after = Object.keys(feedCursors).sort().join(',');
@@ -2611,7 +2656,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       }
     } catch (e) {
       if (routeAuthError(e)) return;
-      await new Promise((r) => setTimeout(r, 3000));
+      feedFailures++;
+      console.error('feed', e);
+      if (feedFailures >= 2) feedDown(e);
+      await feedSleep(backoffDelay(feedFailures, { max: 15000 }));
     }
     feedLoop();
   };
@@ -3452,12 +3500,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
           btn = document.createElement('button');
           btn.className = 'remove-btn mm-remove';
           btn.textContent = 'Remove';
-          btn.onclick = async () => {
+          btn.onclick = () => busy(btn, async () => {
             try {
               await api('/api/v1/channels/' + current.id + '/members/' + p.id, { method: 'DELETE' });
               await refreshHeaderMembers(current);
             } catch (e) { failToast(e, { prefix: 'Could not remove ' + p.name }); }
-          };
+          });
         }
         list.appendChild(memberRow(p, btn));
       }
@@ -3476,13 +3524,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const btn = document.createElement('button');
       btn.className = 'mm-add';
       btn.textContent = 'Add';
-      btn.onclick = async () => {
+      btn.onclick = () => busy(btn, async () => {
         try {
           await api('/api/v1/channels/' + current.id + '/members', { method: 'POST', body: { participant: p.name } });
           await refreshHeaderMembers(current);
           renderAddList();
         } catch (e) { failToast(e, { prefix: 'Could not add ' + p.name }); }
-      };
+      });
       box.appendChild(memberRow(p, btn));
     }
   };
@@ -3972,12 +4020,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
         setTimeout(() => { copy.innerHTML = ICON.copy; }, ok ? 1500 : 2500);
       };
       const revoke = iconBtn('invite-revoke', ICON.trashTwo, 'Revoke');
-      revoke.onclick = async () => {
+      revoke.onclick = () => busy(revoke, async () => {
         if (!confirm('Revoke this link? Anyone holding it can no longer join.')) return;
         try { await api('/api/v1/invites/' + encodeURIComponent(v.id), { method: 'DELETE', ws: workspace }); }
         catch (e) { if (workspace === slug) showInviteErr(e.message); return; }
         if (workspace === slug && !$('invite-modal').classList.contains('hidden')) await renderInvites();
-      };
+      });
       actions.append(copy, revoke);
       li.append(token, info, actions);
       list.appendChild(li);
@@ -4211,6 +4259,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       const uploaded = await api('/api/v1/attachments', { method: 'POST', body: fd, ws: workspace });
       if (!stillHere()) return;
       pendingAtt[which] = uploaded;
+      pendingFile[which] = file;
       showPendingAttachment(which, file);
     } catch (e) { if (stillHere()) failToast(e, { prefix: 'Could not upload ' + file.name, retry: () => uploadPending(which, file) }); }
   };
@@ -4296,14 +4345,26 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     // scrub it so nothing ever reads it again
     localStorage.removeItem(storeKey);
     if (!sessionToken()) { location.replace(loginURL()); return; }
-    for (;;) {
-      try { await enterChat(); return; }
+    let bootWake = null;
+    for (let attempt = 1; ; attempt++) {
+      try { await enterChat(); clearBanner('boot'); return; }
       catch (e) {
         // the join page and the removed card show under the splash unless it lifts
         if (routeAuthError(e)) { document.body.classList.remove('booting'); return; }
         if (e.status === 404) { document.body.classList.remove('booting'); showEnter(); return; }
         console.error('boot', e);
-        await new Promise((r) => setTimeout(r, 3000));
+        // a first failure is usually a restart mid-deploy; a second one is worth a word
+        if (attempt >= 2) {
+          banner('boot', 'Cannot reach the server. Retrying\u2026', {
+            kind: 'error',
+            action: { label: 'Retry now', run: () => { if (bootWake) bootWake(); } },
+          });
+        }
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, backoffDelay(attempt, { max: 15000 }));
+          bootWake = () => { clearTimeout(t); resolve(); };
+        });
+        bootWake = null;
       }
     }
   })();

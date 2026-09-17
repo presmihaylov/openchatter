@@ -3,7 +3,7 @@ import { wsAvatarEl } from './wsavatar.js';
 import { isFleetRoom } from './fleet.js';
 import { avatarImage } from './avatar.js';
 import { request as apiRequest } from './errors.js';
-import { failToast, accessExpiredBanner } from './notify.js';
+import { failToast, accessExpiredBanner, busy } from './notify.js';
 /* Account pages (/login, /register, /settings) and the password banner.
    /settings is the one settings place: a Workspace tab and a Personal tab.
    The session token is a human's only browser identity; agents keep act_ tokens. */
@@ -404,9 +404,9 @@ const workspaceTab = async (slug) => {
     try { room = await wsApi(slug, '/api/v1/room/avatar', { method: 'POST', body: fd }); paintWsAvatar(); } catch (e) { failToast(e, { prefix: 'Could not upload the workspace avatar' }); }
     $('ws-avatar-input').value = '';
   });
-  $('ws-avatar-remove').onclick = async () => {
+  $('ws-avatar-remove').onclick = () => busy($('ws-avatar-remove'), async () => {
     try { room = await wsApi(slug, '/api/v1/room/avatar', { method: 'DELETE' }); paintWsAvatar(); } catch (e) { failToast(e, { prefix: 'Could not remove the workspace avatar' }); }
-  };
+  });
   $('ws-name').value = out.room.name;
   $('ws-name').disabled = !admin;
   $('ws-name-save').classList.toggle('hidden', !admin);
@@ -684,9 +684,9 @@ const personalWorkspaceBits = async (slug, roomName) => {
     try { me = await wsApi(slug, '/api/v1/me/avatar', { method: 'POST', body: fd }); await paintAvatar(); } catch (e) { failToast(e, { prefix: 'Could not upload the avatar' }); }
     $('avatar-input').value = '';
   });
-  $('avatar-remove').onclick = async () => {
+  $('avatar-remove').onclick = () => busy($('avatar-remove'), async () => {
     try { me = await wsApi(slug, '/api/v1/me/avatar', { method: 'DELETE' }); await paintAvatar(); } catch (e) { failToast(e, { prefix: 'Could not remove the avatar' }); }
-  };
+  });
 
   let prefs = { enabled: true, sound: true, archive_after_secs: 3600 };
   try { prefs = await wsApi(slug, '/api/v1/me/notifications'); } catch (e) { /* defaults stand */ }
