@@ -1,8 +1,7 @@
 // Real-browser + real served-watcher regression for the agent routing contract.
-// A browser human's untagged thread reply wakes the participating test agent;
-// an untagged agent reply and the agent's own reply do not. Direct mentions and
-// root broadcasts still wake, and OPENCHATTER_HUMAN_THREAD_REPLIES=0 disables
-// only the human-thread branch.
+// Human and agent replies wake the participating test agent; its own reply and
+// a reply in a foreign broadcast thread do not. Direct mentions and root
+// broadcasts still wake.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/humanthreadwatch-check.js
 const fs = require('fs');
 const os = require('os');
@@ -18,7 +17,7 @@ const access = process.env.ACCESS_ID ? {
   'CF-Access-Client-Secret': process.env.ACCESS_SECRET,
 } : {};
 const run = Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1e5).toString(36);
-const roomName = 'human thread watcher check ' + run;
+const roomName = 'participant thread watcher check ' + run;
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 
 async function api(route, opts = {}) {
@@ -134,7 +133,7 @@ async function stopWatcher(run) {
 
     watcher = startWatcher(temp, scriptPath);
     await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-ONLINE:')), 'watcher online');
-    assert(watcher.lines.some((line) => line.includes('version 2.5.0')), 'watcher version beacon missing');
+    assert(watcher.lines.some((line) => line.includes('version 2.6.0')), 'watcher version beacon missing');
 
     const replyLines = () => watcher.lines.filter((line) => line.startsWith('REPLY-TO '));
     const waitForReply = (id) => waitFor(() => replyLines().some((line) => line.includes(id)), 'wake for ' + id);
@@ -162,8 +161,8 @@ async function stopWatcher(run) {
     assert(replyLines().filter((line) => line.includes(humanMessage.id)).length === 1, 'human reply double-woke');
 
     const agentReply = await say(peer.token, 'peer agent untagged reply', { thread_root_id: root.id });
-    await waitThrough(agentReply.id);
-    assert(!replyLines().some((line) => line.includes(agentReply.id)), 'untagged agent reply woke watcher');
+    await waitForReply(agentReply.id);
+    assert(replyLines().filter((line) => line.includes(agentReply.id)).length === 1, 'agent reply did not wake exactly once');
 
     const ownReply = await say(watched.token, 'watch agent own reply', { thread_root_id: root.id });
     await waitThrough(ownReply.id);
@@ -177,30 +176,14 @@ async function stopWatcher(run) {
     await waitForReply(broadcast.id);
     assert(replyLines().filter((line) => line.includes(broadcast.id)).length === 1, 'root broadcast did not wake exactly once');
 
-    await stopWatcher(watcher);
-    watcher = undefined;
-    fs.writeFileSync(base + '.env',
-      'SERVER=' + SERVER + '\nTOKEN=' + watched.token + '\nOPENCHATTER_ACK_NAG_SECS=0\nOPENCHATTER_HUMAN_THREAD_REPLIES=0\n',
-      { mode: 0o600 });
-    watcher = startWatcher(temp, scriptPath);
-    await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-ONLINE:')), 'toggle-off watcher online');
-    assert(watcher.lines.some((line) => line.includes('human thread replies off')), 'toggle-off scope beacon missing');
+    const foreignBroadcastReply = await say(peer.token, 'foreign broadcast thread reply', {
+      thread_root_id: broadcast.id,
+    });
+    await waitThrough(foreignBroadcastReply.id);
+    assert(!replyLines().some((line) => line.includes(foreignBroadcastReply.id)),
+      'reply in a foreign broadcast thread woke watcher');
 
-    const disabledBody = 'browser human reply while disabled';
-    await page.type('#thread-input', disabledBody);
-    await page.keyboard.press('Enter');
-    await page.waitForFunction((body) => document.querySelector('#thread-messages').textContent.includes(body),
-      { timeout: 10000 }, disabledBody);
-    let disabled;
-    await waitFor(async () => {
-      const after = await api('/api/v1/threads/' + root.id, { token: watched.token });
-      disabled = after.messages.find((message) => message.body === disabledBody);
-      return Boolean(disabled);
-    }, 'disabled browser reply persistence');
-    await waitThrough(disabled.id);
-    assert(!replyLines().some((line) => line.includes(disabled.id)), 'toggle-off human reply woke watcher');
-
-    console.log('HUMANTHREADWATCH_CHECK_OK');
+    console.log('THREADWATCH_CHECK_OK');
   } finally {
     if (watcher) await stopWatcher(watcher);
     if (browser) {
@@ -215,6 +198,6 @@ async function stopWatcher(run) {
     if (temp) fs.rmSync(temp, { recursive: true, force: true });
   }
 })().catch((err) => {
-  console.error('HUMANTHREADWATCH_CHECK_FAIL:', err.message);
+  console.error('THREADWATCH_CHECK_FAIL:', err.message);
   process.exit(1);
 });

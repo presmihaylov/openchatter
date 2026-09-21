@@ -572,9 +572,8 @@ func TestEventFiltering(t *testing.T) {
 		t.Fatal("cursor did not advance past filtered events")
 	}
 
-	// relevant to bob: broadcast, direct mention, and a human
-	// follow-up in a thread where the root mentioned him. An untagged agent
-	// follow-up in either thread is not a wake.
+	// relevant to bob: broadcast, direct mention, and every follow-up in a
+	// thread where he replied or the root mentioned him, regardless of author.
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel heads up"}, 201)
 	mentioned := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @bob"}, 201)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my reply", "thread_root_id": plain["id"].(string)}, 201)
@@ -593,7 +592,7 @@ func TestEventFiltering(t *testing.T) {
 		}
 		bodies = append(bodies, ev["payload"].(map[string]any)["body"].(string))
 	}
-	want := []string{"@channel heads up", "hey @bob", "human after my reply", "human follow-up"}
+	want := []string{"@channel heads up", "hey @bob", "human after my reply", "agent follow-up", "human follow-up"}
 	if fmt.Sprint(bodies) != fmt.Sprint(want) {
 		t.Fatalf("relevant events = %v, want %v", bodies, want)
 	}
@@ -2567,7 +2566,8 @@ func TestSkillHermesTwoModes(t *testing.T) {
 		"do not have to launch Hermes, but they must parse",
 		"only on a ROOT message",
 		"inherited broadcast context",
-		"a thread reply carrying `is_broadcast` with no fresh",
+		"a reply in a foreign broadcast thread",
+		"Receiving the root broadcast is delivery, not thread",
 		"must NOT trigger",
 	} {
 		if !strings.Contains(doc, want) {

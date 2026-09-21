@@ -69,8 +69,8 @@ func TestDeliveryReceipts(t *testing.T) {
 	}
 
 	// 2. bob goes offline; two mentions and a root broadcast queue as deferred,
-	// as does a HUMAN reply in a thread bob wrote in. An agent's untagged reply,
-	// a reply in a foreign thread and a broadcast inside a thread do not.
+	// as do both HUMAN and AGENT replies in a thread bob wrote in. A reply in a
+	// foreign thread and a broadcast inside that thread do not.
 	bob.must("POST", "/api/v1/me/offline", nil, 200)
 	m1 := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob two"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob three"}, 201)
@@ -78,7 +78,7 @@ func TestDeliveryReceipts(t *testing.T) {
 	// bob's own root, written while offline (a request touches presence; go offline again after)
 	root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's root"}, 201)
 	bob.must("POST", "/api/v1/me/offline", nil, 200)
-	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "agent untagged, no delivery", "thread_root_id": root["id"]}, 201)
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "agent untagged, delivered", "thread_root_id": root["id"]}, 201)
 	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "five, human untagged", "thread_root_id": root["id"]}, 201)
 	// foreign thread: alice's root, alice's reply; bob is not in it
 	foreign := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "alice root"}, 201)
@@ -87,8 +87,8 @@ func TestDeliveryReceipts(t *testing.T) {
 	_ = m1
 
 	peek := bob.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)
-	if n := len(peek["events"].([]any)); n != 4 {
-		t.Fatalf("peek want 4 deferred events (two mentions, a root broadcast, a human thread reply), got %d: %v", n, bodies(peek))
+	if n := len(peek["events"].([]any)); n != 5 {
+		t.Fatalf("peek want 5 deferred events (two mentions, a root broadcast, two thread replies), got %d: %v", n, bodies(peek))
 	}
 	for _, r := range peek["receipts"].([]any) {
 		if r.(map[string]any)["state"] != "deferred" {
@@ -97,7 +97,7 @@ func TestDeliveryReceipts(t *testing.T) {
 	}
 	// peek did not mark anything
 	st = bob.must("GET", "/api/v1/participants/me/delivery", nil, 200)
-	if st["deferred"].(float64) != 4 || st["delivered"].(float64) != 0 {
+	if st["deferred"].(float64) != 5 || st["delivered"].(float64) != 0 {
 		t.Fatalf("peek must not mark delivered: %v", st)
 	}
 
@@ -133,11 +133,11 @@ func TestDeliveryReceipts(t *testing.T) {
 			total++
 		}
 	}
-	if total != 4 {
-		t.Fatalf("concurrent drains want 4 events once each, got %d", total)
+	if total != 5 {
+		t.Fatalf("concurrent drains want 5 events once each, got %d", total)
 	}
 	st = bob.must("GET", "/api/v1/participants/me/delivery", nil, 200)
-	if st["delivered"].(float64) != 4 || st["deferred"].(float64) != 0 || st["oldest_unacked_at"] == nil {
+	if st["delivered"].(float64) != 5 || st["deferred"].(float64) != 0 || st["oldest_unacked_at"] == nil {
 		t.Fatalf("after drain: %v", st)
 	}
 
@@ -153,14 +153,14 @@ func TestDeliveryReceipts(t *testing.T) {
 	}
 	expire()
 	again := bob.must("GET", "/api/v1/me/inbox", nil, 200)
-	if n := len(again["events"].([]any)); n != 4 {
-		t.Fatalf("replay want 4, got %d", n)
+	if n := len(again["events"].([]any)); n != 5 {
+		t.Fatalf("replay want 5, got %d", n)
 	}
 	first := again["events"].([]any)[0].(map[string]any)
 	bob.must("POST", fmt.Sprintf("/api/v1/events/%d/ack", int64(first["seq"].(float64))), nil, 204)
 	again = bob.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)
-	if n := len(again["events"].([]any)); n != 3 {
-		t.Fatalf("after one ack want 3 left, got %d", n)
+	if n := len(again["events"].([]any)); n != 4 {
+		t.Fatalf("after one ack want 4 left, got %d", n)
 	}
 
 	// 5. attempts past the room cap fail as retries_exhausted; admin sets the cap
@@ -179,7 +179,7 @@ func TestDeliveryReceipts(t *testing.T) {
 	expire()
 	bob.must("GET", "/api/v1/me/inbox", nil, 200) // attempt 4 > 3: failed
 	st = bob.must("GET", "/api/v1/participants/me/delivery", nil, 200)
-	if st["failed"].(float64) != 3 || st["pending"].(float64) != 0 {
+	if st["failed"].(float64) != 4 || st["pending"].(float64) != 0 {
 		t.Fatalf("after exhausting retries: %v", st)
 	}
 	expire()
@@ -197,7 +197,7 @@ func TestDeliveryReceipts(t *testing.T) {
 		t.Fatalf("sweep dead-lettered %d (%v), want 1", n, err)
 	}
 	st = bob.must("GET", "/api/v1/participants/me/delivery", nil, 200)
-	if st["failed"].(float64) != 4 || st["pending"].(float64) != 0 {
+	if st["failed"].(float64) != 5 || st["pending"].(float64) != 0 {
 		t.Fatalf("after dead-letter: %v", st)
 	}
 	if err := store.BackdateDeliveries(ctx, bobID, 31*24*time.Hour); err != nil {
@@ -226,10 +226,9 @@ func TestDeliveryReceipts(t *testing.T) {
 	}
 }
 
-// Mentioning an agent enrolls it in the thread for later HUMAN replies, even
-// if the agent never writes there. Agent follow-ups stay tag-required and make
-// no receipt.
-func TestHumanThreadDeliveryIncludesMentionedAgent(t *testing.T) {
+// Mentioning an agent enrolls it in the thread for every later reply, even if
+// the agent never writes there.
+func TestThreadDeliveryIncludesMentionedAgent(t *testing.T) {
 	srv, _ := newTestServer(t)
 	secret, alice, bob := setupRoom(t, srv.URL)
 	human := &testClient{t: t, base: srv.URL}
@@ -257,12 +256,17 @@ func TestHumanThreadDeliveryIncludesMentionedAgent(t *testing.T) {
 	}, 201)
 	peek := bob.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)
 	events := peek["events"].([]any)
-	if len(events) != 1 {
-		t.Fatalf("later receipt count = %d, want human reply only: %v", len(events), bodies(peek))
+	if len(events) != 2 {
+		t.Fatalf("later receipt count = %d, want both thread replies: %v", len(events), bodies(peek))
 	}
-	payload := events[0].(map[string]any)["payload"].(map[string]any)
-	if payload["body"] != "human follow-up" || payload["author_kind"] != "human" || fmt.Sprint(payload["thread_participants"]) != "[alice bob maya]" {
-		t.Fatalf("human thread receipt payload: %v", payload)
+	for i, want := range []struct{ body, kind, participants string }{
+		{"agent follow-up", "agent", "[alice bob]"},
+		{"human follow-up", "human", "[alice bob maya]"},
+	} {
+		payload := events[i].(map[string]any)["payload"].(map[string]any)
+		if payload["body"] != want.body || payload["author_kind"] != want.kind || fmt.Sprint(payload["thread_participants"]) != want.participants {
+			t.Fatalf("thread receipt payload %d: %v", i, payload)
+		}
 	}
 }
 

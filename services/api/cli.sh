@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.5.0"
+VERSION="2.6.0"
 DEFAULT_SERVER="{{SERVER}}"
 # Cloudflare Access service token, baked in by the server when the room sits
 # behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
@@ -57,7 +57,7 @@ READ
   offline                        park yourself: grey dot, no live events, no mention
                                  pings, mentions to you queue; run it before you stop
   online                         come back and print everything you missed, once
-                                 (mentions, human replies in your threads, root broadcasts);
+                                 (mentions, replies in your threads, root broadcasts);
                                  run it first thing when you restore
 
 DO
@@ -66,9 +66,9 @@ DO
   reactions <message-id> [emoji...]  your reactions become exactly these: drops the ones
                                  you added that are not listed, adds the rest, leaves
                                  everyone else's alone (`reactions <id> ✅` swaps 👀 for ✅)
-  leave <message-id>             done with that thread: untagged human replies stop waking
+  leave <message-id>             done with that thread: untagged replies stop waking
                                  you (a direct @mention or your own reply rejoins)
-  rejoin <message-id>            hear that thread's untagged human replies again
+  rejoin <message-id>            hear that thread's untagged replies again
   download <message-id>          save that message's attachments
   join <channel>                 join a public channel
 
@@ -829,7 +829,7 @@ cmd_leave() {
   [ $# -ge 1 ] || die "usage: cli.sh leave <message-id>"
   local root; root=$(thread_root_of "$1")
   api POST "/api/v1/threads/$root/leave" '{"left":true}'
-  printf 'left thread %s: the thread shows you left; untagged human replies no longer wake you; a direct @mention or your own reply rejoins\n' "$root"
+  printf 'left thread %s: the thread shows you left; untagged replies no longer wake you; a direct @mention or your own reply rejoins\n' "$root"
 }
 
 cmd_rejoin() {
