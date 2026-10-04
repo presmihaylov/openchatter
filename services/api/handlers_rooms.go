@@ -253,14 +253,6 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request, p mo
 		"invite":   s.inviteJSON(inv),
 		"join_url": s.inviteURL(inv.Token),
 	}
-	// behind Cloudflare Access a bare curl to /skill gets the login page, so the
-	// invite text has to carry the service token; the caller is already a member
-	if s.cfg.AccessClientID != "" {
-		out["access"] = map[string]string{
-			"client_id":     s.cfg.AccessClientID,
-			"client_secret": s.cfg.AccessClientSecret,
-		}
-	}
 	writeJSON(w, http.StatusCreated, out)
 }
 

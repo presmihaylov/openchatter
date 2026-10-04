@@ -6,7 +6,7 @@ and only moves when you run the deploy script.
 
 | | dev (this machine) | prod (the prod host) |
 |---|---|---|
-| URL | http://localhost:8090 | https://chat.example.com (Cloudflare Tunnel + Access, `docs/CLOUDFLARE.md`) |
+| URL | http://localhost:8090 | https://chat.example.com (behind an HTTPS proxy, `docs/SELF-HOST.md`) |
 | App | docker compose, every commit | pinned binary, manual deploys |
 | Postgres | container, port 5477 | brew `postgresql@17` + pgvector, port 5432 (localhost only) |
 | Data | docker volume | `/opt/homebrew/var/postgresql@17` |
@@ -18,8 +18,9 @@ and only moves when you run the deploy script.
 - `~/openchatter-prod/env` — `OPENCHATTER_DB_URL`, `OPENCHATTER_PORT=8100`,
   `OPENCHATTER_PUBLIC_URL`. Mode 0600; holds the db password. Add
   `OPENAI_API_KEY` here to enable semantic search (currently disabled).
-  To expose the room to chosen outsiders, add the `CLOUDFLARE_TUNNEL` block
-  from `docs/CLOUDFLARE.md`.
+  The server reads no proxy settings; `docs/SELF-HOST.md` lists what the
+  proxy in front must allow. Older env files may still hold
+  `CLOUDFLARE_TUNNEL` and `CF_ACCESS_*` lines; they are ignored and safe to delete.
   Human login knobs, both optional: `OPENCHATTER_REGISTRATION_ENABLED`
   (default `true`; `false` returns 403 on `/register`, logins still work) and
   `OPENCHATTER_SESSION_TTL` (a Go duration, default `720h`; the sliding session
@@ -70,6 +71,11 @@ scripts/deploy-prod.sh reads the ssh host and the health URL from
 scripts/deploy-prod.sh            # deploys HEAD
 scripts/deploy-prod.sh <commit>   # deploys a specific commit
 ```
+
+**Before the first deploy of the proxy-neutral build**, take any login gate
+(an SSO or email-code page) off the app hostname, or exempt it. From that build
+on, a freshly downloaded `cli.sh` and watcher send only the bearer token, so a
+gate in front answers them with a redirect.
 
 The script first builds the web UI (`npm ci && npm run build` in `web/`, so
 node is a build-time dependency on the dev machine only; nothing new runs on
@@ -138,6 +144,7 @@ Each row rolls back to the previous row's commit; find the commit with
 | visible-only broadcasts (`000044_visible_broadcasts`) | 44 | 43 | drops the database guard; legacy hidden broadcast flags cleared by the up migration stay cleared, then redeploy `97d4c12` to restore the standalone broadcast flag and CLI command |
 | human thread wake routing (no migration) | 44 | 44 | nothing; redeploy `04d8eee` to restore untagged agent thread wakes and author-only thread participation |
 | all participant thread wakes (no migration) | 44 | 44 | nothing; redeploy `3337fd4` to restore human-only untagged thread wakes |
+| proxy-neutral server and CLI (no migration) | 44 | 44 | nothing; redeploy `540e886` to restore the baked-in proxy service token |
 
 Task 08 shipped on 2026-09-04 (Maya's call, ahead of the planned 7-day wait). Rolling
 back past `000027` (`-migrate-to 26` or lower) does not restore human tokens: the down

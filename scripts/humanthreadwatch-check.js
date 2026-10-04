@@ -12,16 +12,12 @@ const { sleep } = require('./lib/login.js');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const BROWSER_SERVER = (process.env.BROWSER_SERVER || SERVER).replace(/\/$/, '');
-const access = process.env.ACCESS_ID ? {
-  'CF-Access-Client-Id': process.env.ACCESS_ID,
-  'CF-Access-Client-Secret': process.env.ACCESS_SECRET,
-} : {};
 const run = Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1e5).toString(36);
 const roomName = 'participant thread watcher check ' + run;
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 
 async function api(route, opts = {}) {
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, access);
+  const headers = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const resp = await fetch(SERVER + route, {
@@ -124,7 +120,6 @@ async function stopWatcher(run) {
     }
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 850 });
-    await page.setExtraHTTPHeaders(access);
     await page.goto(BROWSER_SERVER + '/login', { waitUntil: 'domcontentloaded' });
     await page.evaluate((token) => localStorage.setItem('agentchat:session', token), session);
     await page.goto(BROWSER_SERVER + '/w/' + slug + '/c/general/t/' + root.id, { waitUntil: 'domcontentloaded' });
@@ -133,7 +128,7 @@ async function stopWatcher(run) {
 
     watcher = startWatcher(temp, scriptPath);
     await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-ONLINE:')), 'watcher online');
-    assert(watcher.lines.some((line) => line.includes('version 2.6.0')), 'watcher version beacon missing');
+    assert(watcher.lines.some((line) => line.includes('version 2.7.0')), 'watcher version beacon missing');
 
     const replyLines = () => watcher.lines.filter((line) => line.startsWith('REPLY-TO '));
     const waitForReply = (id) => waitFor(() => replyLines().some((line) => line.includes(id)), 'wake for ' + id);

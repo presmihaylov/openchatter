@@ -1,23 +1,16 @@
 // Browser + API E2E for token-owned agent identities. A plain human sees an X
 // only on their own agents; an admin sees it on every agent. Confirming the X
 // revokes the token, removes the row, and frees the name for a fresh id while
-// old messages keep the old author. Works on local dev or a Cloudflare-gated
-// deployment with ACCESS_ID and ACCESS_SECRET.
+// old messages keep the old author.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/agentidentity-check.js
 const puppeteer = require('puppeteer-core');
 
 const SERVER = process.env.SERVER || 'http://localhost:8095';
-const ACCESS_ID = process.env.ACCESS_ID || '';
-const ACCESS_SECRET = process.env.ACCESS_SECRET || '';
-const access = ACCESS_ID ? {
-  'CF-Access-Client-Id': ACCESS_ID,
-  'CF-Access-Client-Secret': ACCESS_SECRET,
-} : {};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 
 async function request(path, opts = {}) {
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, access);
+  const headers = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const resp = await fetch(SERVER + path, {
@@ -45,7 +38,6 @@ async function register(displayName) {
 }
 
 async function openWorkspace(page, session, slug) {
-  await page.setExtraHTTPHeaders(access);
   await page.goto(SERVER + '/login', { waitUntil: 'networkidle2' });
   await page.evaluate((token) => localStorage.setItem('agentchat:session', token), session);
   await page.goto(SERVER + '/w/' + slug, { waitUntil: 'networkidle2' });

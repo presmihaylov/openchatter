@@ -1,12 +1,12 @@
 // One vocabulary for everything that goes wrong between the page and the API:
 // request() turns every failure (status, dead network, timeout, unreadable body,
-// Access redirect) into an ApiError with a `kind` and a sentence a person can act on.
+// redirect) into an ApiError with a `kind` and a sentence a person can act on.
 
 export const KIND = Object.freeze({
   offline: 'offline',            // navigator says there is no network
   network: 'network',            // fetch threw while online: DNS, refused, CORS
   timeout: 'timeout',            // our own deadline fired
-  access_expired: 'access_expired', // Cloudflare Access answered with its login redirect
+  redirected: 'redirected',      // a 3xx: the API never redirects, so something in front did
   session_invalid: 'session_invalid', // 401 session_invalid: the login is gone
   unauthorized: 'unauthorized',  // any other 401
   forbidden: 'forbidden',        // 403
@@ -25,7 +25,7 @@ const RETRYABLE = new Set([KIND.offline, KIND.network, KIND.timeout, KIND.rate_l
 
 // Which failures end the session rather than one request: they get a
 // persistent banner, not a toast.
-const SESSION_KINDS = new Set([KIND.access_expired, KIND.session_invalid, KIND.unauthorized]);
+const SESSION_KINDS = new Set([KIND.redirected, KIND.session_invalid, KIND.unauthorized]);
 
 export class ApiError extends Error {
   constructor(kind, message, extra = {}) {
@@ -49,7 +49,7 @@ const TEXT = {
   [KIND.offline]: 'You are offline. Check the connection and try again.',
   [KIND.network]: 'Cannot reach the server. Try again in a moment.',
   [KIND.timeout]: 'The server took too long to answer. Try again.',
-  [KIND.access_expired]: 'Your Cloudflare Access session has expired. Reload the page to sign in again.',
+  [KIND.redirected]: 'The server answered with a redirect instead of data. Reload the page to continue.',
   [KIND.session_invalid]: 'Your login has expired. Sign in again.',
   [KIND.unauthorized]: 'Your login is not valid here. Sign in again.',
   [KIND.forbidden]: 'You do not have permission to do that.',
@@ -162,9 +162,8 @@ export const request = async (path, opts = {}) => {
       method: opts.method || 'GET',
       headers,
       body,
-      // Cloudflare Access answers an expired session with a 302 to its login
-      // page on another origin. Followed, that is a CORS failure that looks
-      // like being offline; kept manual, it is an opaque redirect we can name.
+      // a redirect to another origin, followed, is a CORS failure that looks
+      // like being offline; kept manual, it is an opaque redirect we can name
       redirect: 'manual',
       signal: ctl ? ctl.signal : undefined,
     });
@@ -175,7 +174,7 @@ export const request = async (path, opts = {}) => {
     if (ctl && opts.signal) opts.signal.removeEventListener('abort', onAbort);
   }
   if (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400)) {
-    throw new ApiError(KIND.access_expired, TEXT[KIND.access_expired], { status: resp.status || 302, path });
+    throw new ApiError(KIND.redirected, TEXT[KIND.redirected], { status: resp.status || 302, path });
   }
   if (resp.status === 204) return null;
   const { data, json, text } = await readBody(resp);

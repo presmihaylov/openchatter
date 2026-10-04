@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, KIND } from '../src/errors.js';
 import {
-  accessExpiredBanner, banner, busy, clearBanner, clearInline, failToast, guard, hasBanner, inlineError,
+  redirectBanner, banner, busy, clearBanner, clearInline, failToast, guard, hasBanner, inlineError,
   installGlobalHandlers, resetForTest, toast,
 } from '../src/notify.js';
 
@@ -98,9 +98,9 @@ describe('failToast', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('shows nothing for a cancelled request or an expired Access session', () => {
+  it('shows nothing for a cancelled request or a redirect', () => {
     expect(failToast(new ApiError(KIND.cancelled, 'x'))).toBeNull();
-    expect(failToast(new ApiError(KIND.access_expired, 'x'), { prefix: 'Could not send' })).toBeNull();
+    expect(failToast(new ApiError(KIND.redirected, 'x'), { prefix: 'Could not send' })).toBeNull();
     expect(toasts()).toHaveLength(0);
     expect(spy).not.toHaveBeenCalled();
   });
@@ -134,18 +134,18 @@ describe('banner', () => {
   });
 });
 
-describe('accessExpiredBanner', () => {
+describe('redirectBanner', () => {
   it('keeps one error bar whose only action is a reload', () => {
     const reload = vi.fn();
     const orig = window.location;
     Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
     try {
-      accessExpiredBanner();
-      accessExpiredBanner();
+      redirectBanner();
+      redirectBanner();
       expect(banners()).toHaveLength(1);
-      expect(hasBanner('access')).toBe(true);
+      expect(hasBanner('redirect')).toBe(true);
       expect(banners()[0].classList.contains('error')).toBe(true);
-      expect(banners()[0].textContent).toMatch(/Cloudflare Access session has expired/);
+      expect(banners()[0].textContent).toMatch(/answered with a redirect/);
       const btn = banners()[0].querySelector('.status-banner-action');
       expect(btn.textContent).toBe('Reload');
       btn.click();
@@ -266,7 +266,7 @@ describe('installGlobalHandlers', () => {
       'Something went wrong. Reload the page if it keeps happening.',
       'The server is unavailable right now.',
     ]);
-    for (const kind of [KIND.cancelled, KIND.access_expired]) {
+    for (const kind of [KIND.cancelled, KIND.redirected]) {
       const quiet = new Event('unhandledrejection');
       quiet.reason = new ApiError(kind, 'x');
       window.dispatchEvent(quiet);

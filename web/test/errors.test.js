@@ -115,7 +115,7 @@ describe('classify', () => {
   });
 
   it('names the fixed sentence of a kind, and the unknown one for a bad kind', () => {
-    expect(textOf(KIND.access_expired)).toMatch(/Cloudflare Access session has expired/);
+    expect(textOf(KIND.redirected)).toMatch(/answered with a redirect/);
     expect(textOf('nope')).toBe('Something went wrong. Try again.');
   });
 });
@@ -180,14 +180,15 @@ describe('request', () => {
     expect(e.code).toBe('rate_limited');
   });
 
-  it('names the Cloudflare Access redirect instead of following it', async () => {
+  it('names a redirect instead of following it, without naming any proxy', async () => {
     const opaque = { ok: false, status: 0, type: 'opaqueredirect', headers: { get: () => null }, text: async () => '' };
     const e = await failure(request('/a', { fetch: fetchWith(opaque) }));
-    expect(e.kind).toBe(KIND.access_expired);
+    expect(e.kind).toBe(KIND.redirected);
     expect(e.isSession).toBe(true);
-    expect(e.message).toMatch(/Cloudflare Access/);
+    expect(e.message).toMatch(/redirect/);
+    expect(e.message).not.toMatch(/Cloudflare|Access/);
     const e2 = await failure(request('/a', { fetch: fetchWith(html(302, '')) }));
-    expect(e2.kind).toBe(KIND.access_expired);
+    expect(e2.kind).toBe(KIND.redirected);
   });
 
   it('refuses a 200 HTML page as data', async () => {

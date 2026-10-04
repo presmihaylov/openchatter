@@ -4,10 +4,6 @@ const puppeteer = require('puppeteer-core');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const BROWSER_SERVER = (process.env.BROWSER_SERVER || SERVER).replace(/\/$/, '');
-const access = process.env.ACCESS_ID ? {
-  'CF-Access-Client-Id': process.env.ACCESS_ID,
-  'CF-Access-Client-Secret': process.env.ACCESS_SECRET,
-} : {};
 const traceOnly = process.env.TRACE_ONLY === '1';
 const run = Date.now().toString(36).slice(-7);
 const roomName = 'avatar cache check ' + run;
@@ -16,7 +12,7 @@ let slug;
 
 const assert = (ok, message) => { if (!ok) throw new Error(message); };
 const api = async (path, opts = {}) => {
-  const headers = Object.assign({}, access, opts.body ? { 'Content-Type': 'application/json' } : {});
+  const headers = opts.body ? { 'Content-Type': 'application/json' } : {};
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const response = await fetch(SERVER + path, {
@@ -34,7 +30,7 @@ const uploadAvatar = async (token, workspace) => {
   form.append('file', new Blob([bytes], { type: 'image/png' }), 'avatar.png');
   const response = await fetch(SERVER + '/api/v1/me/avatar', {
     method: 'POST',
-    headers: Object.assign({}, access, { Authorization: 'Bearer ' + token, 'X-Workspace-Slug': workspace }),
+    headers: { Authorization: 'Bearer ' + token, 'X-Workspace-Slug': workspace },
     body: form,
   });
   const data = await response.json().catch(() => ({}));
@@ -87,7 +83,6 @@ const waitAvatar = (page, id) => page.waitForFunction((messageID) => {
     }
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 720 });
-    await page.setExtraHTTPHeaders(access);
     const requests = [];
     let phase = 'initial';
     const target = '/api/v1/attachments/' + attachmentID + '?size=128';

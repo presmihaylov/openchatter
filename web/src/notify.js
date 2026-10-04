@@ -38,9 +38,9 @@ const toastHost = () => {
 
 const liveToasts = new Map(); // text -> handle, so a repeat updates instead of stacking
 
-// A cancelled call has nothing to say; an expired Access session already has
-// its own bar (accessExpiredBanner), so a toast per failed call would only pile up.
-const silent = (e) => e.kind === KIND.cancelled || e.kind === KIND.access_expired;
+// A cancelled call has nothing to say; a redirect already has its own bar
+// (redirectBanner), so a toast per failed call would only pile up.
+const silent = (e) => e.kind === KIND.cancelled || e.kind === KIND.redirected;
 
 // toast(text, {kind: 'info'|'error', action: {label, run}, ttl}) -> {el, dismiss}
 export const toast = (text, opts = {}) => {
@@ -136,12 +136,12 @@ export const hasBanner = (id) => {
   return !!(host && host.querySelector(`[data-banner="${id}"]`));
 };
 
-const ACCESS_BANNER = 'access';
+const REDIRECT_BANNER = 'redirect';
 
-// accessExpiredBanner: Cloudflare Access wants a fresh login, and only a full
-// page load reaches its login page, so the bar offers exactly that. Stays up
-// until the reload; every later request would only hit the same redirect.
-export const accessExpiredBanner = () => banner(ACCESS_BANNER, textOf(KIND.access_expired), {
+// redirectBanner: only a full page load follows a redirect (a proxy login, for
+// one), so the bar offers exactly that. Stays up until the reload; every later
+// request would only hit the same redirect.
+export const redirectBanner = () => banner(REDIRECT_BANNER, textOf(KIND.redirected), {
   kind: 'error',
   action: { label: 'Reload', run: () => location.reload() },
 });

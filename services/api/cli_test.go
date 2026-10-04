@@ -123,126 +123,120 @@ func TestCLIScriptServed(t *testing.T) {
 
 }
 
-// Behind Cloudflare Access every request must carry the service token, or the
-// agent gets a login page instead of the API. The served script bakes the
-// token in; a proxy in front of the test server checks it actually arrives.
-func TestCLICarriesAccessServiceToken(t *testing.T) {
-	srv, store := newTestServer(t)
-	_, alice, _ := setupRoom(t, srv.URL)
-	// re-serve the script with a token configured; the room itself is unchanged
-	withAccess := httptest.NewServer(New(store, testConfig(store, Config{
-		PublicURL: "http://public.test", AccessClientID: "cf-id-123", AccessClientSecret: "cf-secret-456",
-	})).Handler())
-	defer withAccess.Close()
-	resp, err := http.Get(withAccess.URL + "/cli.sh")
-	if err != nil {
-		t.Fatal(err)
+// The app must not know or care what sits in front of it, so no served
+// surface names a proxy vendor or carries a slot for its credentials.
+func TestServedSurfacesNameNoProxy(t *testing.T) {
+	srv, _ := newTestServer(t)
+	surfaces := []string{"/cli.sh", "/skill", "/skill/claude-code", "/skill/hermes",
+		"/skill/watch.sh", "/skill/bridge.sh", "/skill/inject.sh"}
+	for _, g := range harnessGuides {
+		surfaces = append(surfaces, "/skill/"+g.slug)
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	script := string(raw)
-	if strings.Contains(script, "{{CF_ACCESS") {
-		t.Fatal("service token placeholders were not substituted")
-	}
-	if !strings.Contains(script, `DEFAULT_CF_ACCESS_CLIENT_SECRET="cf-secret-456"`) {
-		t.Fatal("service token not baked into the served script")
-	}
-
-	// and with no token configured the placeholders are empty, not left literal
-	plain, err := http.Get(srv.URL + "/cli.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer plain.Body.Close()
-	rawPlain, _ := io.ReadAll(plain.Body)
-	if !strings.Contains(string(rawPlain), `DEFAULT_CF_ACCESS_CLIENT_SECRET=""`) {
-		t.Fatal("plain room should serve an empty service token")
-	}
-
-	// a stand-in for Cloudflare Access: reject anything without the headers
-	target, _ := url.Parse(srv.URL)
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	seen := 0
-	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("CF-Access-Client-Id") != "cf-id-123" || r.Header.Get("CF-Access-Client-Secret") != "cf-secret-456" {
-			http.Error(w, "<html>Cloudflare Access login</html>", 403)
-			return
+	vendor := regexp.MustCompile(`(?i)cloudflare|cf-access|cf_access|\{\{CF_`)
+	for _, surface := range surfaces {
+		if m := vendor.FindString(getText(t, srv.URL+surface)); m != "" {
+			t.Errorf("%s names a proxy vendor: %q", surface, m)
 		}
-		seen++
-		proxy.ServeHTTP(w, r)
-	}))
-	defer gate.Close()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cli.sh")
-	if err := os.WriteFile(path, raw, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	envFile := filepath.Join(dir, "room.env")
-	if err := os.WriteFile(envFile, []byte("SERVER="+gate.URL+"\nTOKEN="+alice.token+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command("bash", path, "--env", envFile, "whoami").CombinedOutput()
-	if err != nil || !strings.HasPrefix(string(out), "alice ") {
-		t.Fatalf("whoami through the Access gate: %v\n%s", err, out)
-	}
-	if seen == 0 {
-		t.Fatal("the gate never saw a request with the service token")
-	}
-	if strings.Contains(string(out), "cf-secret-456") {
-		t.Fatal("the CLI printed the service secret")
-	}
-	// the env file wins over the baked-in token, and a wrong one is a loud 403
-	bad := filepath.Join(dir, "bad.env")
-	_ = os.WriteFile(bad, []byte("SERVER="+gate.URL+"\nTOKEN="+alice.token+"\nCF_ACCESS_CLIENT_SECRET=leaked-zz9\n"), 0o600)
-	out, err = exec.Command("bash", path, "--env", bad, "whoami").CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "Cloudflare Access") {
-		t.Fatalf("a rejected service token should name Cloudflare Access: %v\n%s", err, out)
-	}
-	if strings.Contains(string(out), "leaked-zz9") || strings.Contains(string(out), "cf-secret") {
-		t.Fatalf("the error printed a secret:\n%s", out)
 	}
 }
 
-func TestInviteCarriesAccessServiceToken(t *testing.T) {
-	srv, store := newTestServer(t)
-	_, alice, _ := setupRoom(t, srv.URL)
-	if _, has := alice.must("POST", "/api/v1/invites", nil, 201)["access"]; has {
-		t.Fatal("plain room must not return an access block")
-	}
-	withAccess := httptest.NewServer(New(store, testConfig(store, Config{
-		PublicURL: "http://public.test", AccessClientID: "cf-id-123", AccessClientSecret: "cf-secret-456",
-	})).Handler())
-	defer withAccess.Close()
-	gated := &testClient{t: t, base: withAccess.URL, token: alice.token}
-	access, ok := gated.must("POST", "/api/v1/invites", nil, 201)["access"].(map[string]any)
-	if !ok {
-		t.Fatal("gated room must return the access block")
-	}
-	if access["client_id"] != "cf-id-123" || access["client_secret"] != "cf-secret-456" {
-		t.Fatalf("access block = %v", access)
-	}
-	// unauthenticated callers never see it
-	if code, _ := (&testClient{t: t, base: withAccess.URL}).do("POST", "/api/v1/invites", nil); code != 401 {
-		t.Fatalf("anonymous invite = %d, want 401", code)
-	}
-}
-
-// accessGate stands in for Cloudflare Access: anything without the service
-// token gets an HTML login page instead of the room.
-func accessGate(t *testing.T, upstream, id, secret string) *httptest.Server {
+// frontProxy passes every request through and records any header beyond what
+// the client is meant to send, so a test can prove nothing proxy-specific leaks.
+func frontProxy(t *testing.T, upstream string) (*httptest.Server, func() []string) {
 	t.Helper()
 	target, _ := url.Parse(upstream)
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("CF-Access-Client-Id") != id || r.Header.Get("CF-Access-Client-Secret") != secret {
-			http.Error(w, "<html>Cloudflare Access login</html>", 403)
-			return
+	var mu sync.Mutex
+	var extra []string
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for name := range r.Header {
+			if strings.HasPrefix(strings.ToLower(name), "cf-") {
+				mu.Lock()
+				extra = append(extra, name)
+				mu.Unlock()
+			}
 		}
 		proxy.ServeHTTP(w, r)
 	}))
+	t.Cleanup(front.Close)
+	return front, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), extra...)
+	}
+}
+
+// redirectGate stands in for an auth proxy that bounces every request to its
+// own login page instead of letting it reach the room.
+func redirectGate(t *testing.T) *httptest.Server {
+	t.Helper()
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://login.example.com/sign-in", http.StatusFound)
+	}))
 	t.Cleanup(gate.Close)
 	return gate
+}
+
+// servedCLI writes the served cli.sh to a temp dir and returns its path.
+func servedCLI(t *testing.T, base string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cli.sh")
+	if err := os.WriteFile(path, []byte(getText(t, base+"/cli.sh")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeEnv(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "room.env")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// An env file written for the old proxy-aware CLI still holds two credential
+// lines. They are inert now: the CLI sends the bearer token and nothing else.
+func TestCLISendsOnlyTheBearerToken(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	front, extra := frontProxy(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	env := writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+
+		"\nCF_ACCESS_CLIENT_ID=stale-id\nCF_ACCESS_CLIENT_SECRET=stale-zz9\n")
+	out, err := exec.Command("bash", cli, "--env", env, "whoami").CombinedOutput()
+	if err != nil || !strings.HasPrefix(string(out), "alice ") {
+		t.Fatalf("whoami through a plain proxy: %v\n%s", err, out)
+	}
+	if got := extra(); len(got) > 0 {
+		t.Fatalf("the CLI sent proxy headers: %v", got)
+	}
+}
+
+// The API never redirects, so a 3xx came from whatever sits in front of it.
+// The CLI says that, instead of blaming the token, and never prints the token.
+func TestCLINamesARedirectFromTheFront(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	env := writeEnv(t, "SERVER="+redirectGate(t).URL+"\nTOKEN="+alice.token+"\n")
+	out, err := exec.Command("bash", cli, "--env", env, "whoami").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "redirect (HTTP 302)") {
+		t.Fatalf("a redirect should be named as one: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "rejected the token") || strings.Contains(string(out), alice.token) {
+		t.Fatalf("a redirect is not a token problem, and the token stays secret:\n%s", out)
+	}
+}
+
+// The invite answer is the same whatever sits in front of the server.
+func TestInviteCarriesNoProxyBlock(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	if _, has := alice.must("POST", "/api/v1/invites", nil, 201)["access"]; has {
+		t.Fatal("the invite must not return an access block")
+	}
 }
 
 // watcherTemplate pulls the persistent watcher script out of the served
@@ -325,13 +319,13 @@ func runWatcherPosting(t *testing.T, script, home string, post func()) string {
 	return out.String()
 }
 
-func TestWatcherTemplatePassesAccessGate(t *testing.T) {
+func TestWatcherTemplateWorksBehindAnyProxy(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
 	}
 	srv, _ := newTestServer(t)
 	_, alice, bob := setupRoom(t, srv.URL)
-	gate := accessGate(t, srv.URL, "cf-id-123", "cf-secret-456")
+	front, extra := frontProxy(t, srv.URL)
 	script := watcherTemplate(t, srv.URL)
 
 	home := t.TempDir()
@@ -345,33 +339,36 @@ func TestWatcherTemplatePassesAccessGate(t *testing.T) {
 		}
 	}
 
-	// through the gate with the headers in the env file: hears bob, no errors
-	write("SERVER=" + gate.URL + "\nTOKEN=" + alice.token + "\nCF_ACCESS_CLIENT_ID=cf-id-123\nCF_ACCESS_CLIENT_SECRET=cf-secret-456\n")
+	// through a plain reverse proxy, with stale proxy credentials left in the env file
+	write("SERVER=" + front.URL + "\nTOKEN=" + alice.token + "\nCF_ACCESS_CLIENT_ID=stale-id\nCF_ACCESS_CLIENT_SECRET=stale-zz9\n")
 	out := runWatcher(t, script, home, bob)
 	if !strings.Contains(out, "are you there") || strings.Contains(out, "WATCHER-ERROR") {
-		t.Fatalf("gated watcher with headers should hear bob cleanly:\n%s", out)
+		t.Fatalf("watcher behind a proxy should hear bob cleanly:\n%s", out)
 	}
 	for _, beacon := range []string{"WATCHER-UP", "WATCHER-SELFTEST-OK", "WATCHER-SCOPE", "REPLY-TO "} {
 		if !strings.Contains(out, beacon) {
 			t.Fatalf("watcher output lacks %s:\n%s", beacon, out)
 		}
 	}
-	if strings.Contains(out, "cf-secret-456") {
-		t.Fatalf("watcher printed the service secret:\n%s", out)
+	if got := extra(); len(got) > 0 {
+		t.Fatalf("the watcher sent proxy headers: %v", got)
+	}
+	if strings.Contains(out, "stale-zz9") {
+		t.Fatalf("watcher printed an env secret:\n%s", out)
 	}
 
-	// a LAN room (no gate, no headers) keeps working unchanged
+	// straight to the server works the same
 	write("SERVER=" + srv.URL + "\nTOKEN=" + alice.token + "\n")
 	out = runWatcher(t, script, home, bob)
 	if !strings.Contains(out, "are you there") || strings.Contains(out, "WATCHER-ERROR") {
-		t.Fatalf("plain watcher should hear bob cleanly:\n%s", out)
+		t.Fatalf("direct watcher should hear bob cleanly:\n%s", out)
 	}
 
-	// and without the headers the gate is real: the watcher is loud, not silent
-	write("SERVER=" + gate.URL + "\nTOKEN=" + alice.token + "\n")
+	// a front that answers with its own login page is loud, not silent
+	write("SERVER=" + redirectGate(t).URL + "\nTOKEN=" + alice.token + "\n")
 	out = runWatcher(t, script, home, bob)
 	if !strings.Contains(out, "WATCHER-ERROR") || strings.Contains(out, "are you there") {
-		t.Fatalf("gate should reject a watcher without headers:\n%s", out)
+		t.Fatalf("a redirecting front should stop the watcher loudly:\n%s", out)
 	}
 }
 
@@ -390,11 +387,11 @@ func TestSkillRawCurlsCarryCredentialsConfig(t *testing.T) {
 			if !strings.Contains(line, "curl") || !strings.Contains(line, "$SERVER/api/") {
 				continue
 			}
-			// the config file carries the token AND the two Access headers
-			if strings.Contains(line, `-K "$CFRC"`) {
+			// the join runs before there is a token to carry
+			if strings.Contains(line, `-K "$CURLRC"`) || strings.Contains(line, "/api/v1/rooms/join") {
 				continue
 			}
-			t.Errorf("%s: raw curl without -K \"$CFRC\": %s", page, strings.TrimSpace(line))
+			t.Errorf("%s: raw curl without -K \"$CURLRC\": %s", page, strings.TrimSpace(line))
 		}
 	}
 	resp, err := http.Get(srv.URL + "/skill/hermes")
@@ -403,8 +400,8 @@ func TestSkillRawCurlsCarryCredentialsConfig(t *testing.T) {
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(raw), `req.add_header("CF-Access-Client-Id"`) {
-		t.Error("hermes helper does not send the Access headers")
+	if !strings.Contains(string(raw), `req.add_header("Authorization", "Bearer " + TOKEN)`) {
+		t.Error("hermes helper does not send the bearer token")
 	}
 }
 
@@ -722,7 +719,7 @@ func TestWatcherTemplateWakeHookOptIn(t *testing.T) {
 }
 
 // gatedWatcher runs the watcher template through a proxy that can be switched
-// to answer /events with a Cloudflare-style 502 page. It returns the switch,
+// to answer /events with a proxy-style 502 page. It returns the switch,
 // the failed-poll count, and a stop that yields the watcher's output.
 func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed func() int, post func(string), stop func() string) {
 	t.Helper()
@@ -744,9 +741,9 @@ func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed 
 		n := fails
 		mu.Unlock()
 		if isDown && r.URL.Path == "/api/v1/events" {
-			// a Cloudflare 502 page: HTML, and a ray id that differs on every hit
+			// a proxy 502 page: HTML, and a request id that differs on every hit
 			w.WriteHeader(http.StatusBadGateway)
-			w.Write([]byte("<html>Bad gateway, ray " + strconv.Itoa(n) + "</html>"))
+			w.Write([]byte("<html>Bad gateway, request " + strconv.Itoa(n) + "</html>"))
 			return
 		}
 		proxy.ServeHTTP(w, r)
@@ -802,7 +799,7 @@ func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed 
 
 // TestWatcherTemplateBacksOffOnOutage: past the quiet window a real outage is
 // worth exactly one pair of lines, however many polls fail and however much the
-// error text moves (a Cloudflare 502 carries a fresh ray id every hit, which
+// error text moves (a proxy 502 can carry a fresh request id every hit, which
 // used to print a new line each time). The cursor is untouched, so a message
 // posted during the outage still arrives.
 func TestWatcherTemplateBacksOffOnOutage(t *testing.T) {
@@ -828,7 +825,7 @@ func TestWatcherTemplateBacksOffOnOutage(t *testing.T) {
 	}
 }
 
-// TestWatcherTemplateSilentUnderFiveMinutes: a deploy restart, a tunnel blip and
+// TestWatcherTemplateSilentUnderFiveMinutes: a deploy restart, a network blip and
 // a 502 flap all heal well inside five minutes. Each one used to cost every
 // online agent two wakes (ERROR + BACK); a whole run of failed polls inside the
 // window now prints nothing at all, and the mention posted during it arrives.

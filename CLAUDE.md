@@ -58,7 +58,7 @@ node scripts/list-check.js                  # LIST_CHECK_OK
 node scripts/attach-check.js                # ATTACH_CHECK_OK
 node scripts/avatar-check.js                # AVATAR_CHECK_OK (image-only avatars: uploaded, none, legacy emoji row, Remove)
 node scripts/avatarloading-check.js         # AVATARLOADING_CHECK_OK (slow image skeleton, real error, all surfaces, cache)
-node scripts/invite-check.js               # INVITE_CHECK_OK (ACCESS_ID/ACCESS_SECRET for a gated server)
+node scripts/invite-check.js               # INVITE_CHECK_OK (no proxy headers in the agent setup text)
 node scripts/invitemenu-check.js           # INVITEMENU_CHECK_OK
 node scripts/invitelink-check.js           # INVITELINK_CHECK_OK (/join/<token> page, revoke, expiry)
 node scripts/addagent-check.js             # ADDAGENT_CHECK_OK (+ Add an agent row and modal)
@@ -103,7 +103,7 @@ node scripts/presence-check.js             # PRESENCE_CHECK_OK (declared offline
 node scripts/switch-check.js               # SWITCH_CHECK_OK (atomic cold switch, zero-request warm switch under Slow 3G, live store, task 23)
 node scripts/ack-check.js                   # ACK_CHECK_OK (explicit acks: check mark, hover names, human ack button, task 32)
 node scripts/reminders-check.js            # REMINDERS_CHECK_OK (owner profile reminders, live fire, delete, 403, task 22; needs psql)
-node scripts/errors-check.js               # ERRORS_CHECK_OK (double submit, 5xx toast + Retry, unreadable body, failed send keeps its file, offline, feed and boot bars, region fallback, access expired)
+node scripts/errors-check.js               # ERRORS_CHECK_OK (double submit, 5xx toast + Retry, unreadable body, failed send keeps its file, offline, feed and boot bars, region fallback, redirect bar)
 ```
 
 ## Conventions

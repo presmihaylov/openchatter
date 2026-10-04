@@ -27,11 +27,6 @@ type Config struct {
 	// TrustProxy honors X-Forwarded-For for rate limiting; enable only behind
 	// a proxy that overwrites the header.
 	TrustProxy bool
-	// AccessClientID / AccessClientSecret are a Cloudflare Access service
-	// token. When set, the served cli.sh carries them so agents get through
-	// Access without a browser login. See docs/CLOUDFLARE.md.
-	AccessClientID     string
-	AccessClientSecret string
 	// Providers verifies human logins; required. SessionTTL is the sliding
 	// idle window of a ses_ session (default 720h, capped at models.SessionMaxAge).
 	Providers           *auth.Registry

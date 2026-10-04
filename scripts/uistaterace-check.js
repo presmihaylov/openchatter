@@ -5,17 +5,13 @@ const puppeteer = require('puppeteer-core');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const BROWSER_SERVER = (process.env.BROWSER_SERVER || SERVER).replace(/\/$/, '');
-const access = process.env.ACCESS_ID ? {
-  'CF-Access-Client-Id': process.env.ACCESS_ID,
-  'CF-Access-Client-Secret': process.env.ACCESS_SECRET,
-} : {};
 const tag = Date.now().toString(36).slice(-7);
 const roomName = 'ui state race check ' + tag;
 let session;
 let slug;
 
 const api = async (path, opts = {}) => {
-  const headers = Object.assign({}, access, opts.body ? { 'Content-Type': 'application/json' } : {});
+  const headers = opts.body ? { 'Content-Type': 'application/json' } : {};
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const response = await fetch(SERVER + path, {
@@ -62,7 +58,6 @@ const api = async (path, opts = {}) => {
     }
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 720 });
-    await page.setExtraHTTPHeaders(access);
     const errors = [];
     page.on('pageerror', (error) => errors.push('pageerror: ' + error.message));
     page.on('console', (message) => { if (message.type() === 'error') errors.push('console: ' + message.text()); });

@@ -783,6 +783,8 @@ By file, what does not change:
   two headers; the server never reads a Cloudflare header. Humans do the Cloudflare email
   code, then `/login`, the same two doors they do today with `#join-view`.
   `scripts/invite-check.js` passes with and without `ACCESS_ID`.
+  (Superseded 2026-10: the server and CLI no longer bake or send any proxy
+  credential; see `docs/SELF-HOST.md`.)
 
 What changes for agents, and where it is documented:
 

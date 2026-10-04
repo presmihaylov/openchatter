@@ -7,7 +7,7 @@
 // 6 the live feed dies: bar after the second failed poll, Retry now, the missed
 //   message arrives and the workspace is refetched once
 // 7 a render crash in one region shows that region's fallback; the rest keeps working
-// 8 an expired Cloudflare Access session: persistent bar with Reload, no toast
+// 8 a redirect in place of an API answer (a proxy login): persistent bar with Reload, no toast
 // 9 a server that cannot boot the page: bar after the second failed attempt, Retry now
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/errors-check.js
 const fs = require('fs');
@@ -196,19 +196,19 @@ const hasMessage = (page, text, timeout = 8000) => page.waitForFunction(
     await page.waitForFunction(() => document.querySelector('#messages .msg') && !document.querySelector('#messages .region-error'), { timeout: 6000 });
   });
 
-  // ---- 8. Cloudflare Access wants a login
-  await step(8, 'access expired bar, no toast', async () => {
+  // ---- 8. something in front of the server redirects an API call
+  await step(8, 'redirect bar, no toast', async () => {
     await clickChannel(page, 'general');
     const toastsBefore = await page.$$eval('#toasts .toast', (n) => n.length);
-    rule = (req) => { if (!isAck(req, m3.id)) return false; req.respond({ status: 302, headers: { location: 'https://team.cloudflareaccess.com/cdn-cgi/access/login/app' }, body: '' }); return true; };
+    rule = (req) => { if (!isAck(req, m3.id)) return false; req.respond({ status: 302, headers: { location: 'https://login.example.com/sign-in' }, body: '' }); return true; };
     await page.hover(`#messages .msg[data-id="${m3.id}"]`);
     await page.click(ackButton(m3.id));
-    await page.waitForSelector('[data-banner="access"]', { timeout: 6000 });
-    const access = await page.$eval('[data-banner="access"]', (el) => ({ text: el.textContent, action: el.querySelector('button')?.textContent }));
-    assert(/Cloudflare Access session has expired/.test(access.text) && access.action === 'Reload', 'access bar: ' + JSON.stringify(access));
+    await page.waitForSelector('[data-banner="redirect"]', { timeout: 6000 });
+    const bar = await page.$eval('[data-banner="redirect"]', (el) => ({ text: el.textContent, action: el.querySelector('button')?.textContent }));
+    assert(/redirect/i.test(bar.text) && !/Cloudflare/.test(bar.text) && bar.action === 'Reload', 'redirect bar: ' + JSON.stringify(bar));
     await sleep(300);
     const toastsAfter = await page.$$eval('#toasts .toast', (n) => n.length);
-    assert(toastsAfter <= toastsBefore, 'an expired session shows one bar, not a toast per call');
+    assert(toastsAfter <= toastsBefore, 'a redirect shows one bar, not a toast per call');
     rule = null;
   });
 

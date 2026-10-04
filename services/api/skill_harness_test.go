@@ -43,7 +43,7 @@ func TestSkillHarnessGuides(t *testing.T) {
 			"http://public.test/skill/watch.sh", "http://public.test/skill/bridge.sh", "http://public.test/skill/inject.sh",
 			`Keep ` + "`" + `WATCH=""` + "`" + `, the fleet default`, "Reactions never wake you",
 			"every reply in a thread", "Human and agent replies both wake you", "ac leave <root>",
-			"watcher 2.6.0",
+			"watcher 2.7.0",
 			"harness-keys.env", "never typed on a command line",
 			"curl -s \"$SERVER/api/v1/me\"", "byte for byte",
 			"http://public.test/skill#humans-and-workspaces", "nothing changes for you",
@@ -332,9 +332,7 @@ func TestBridgeStormGuard(t *testing.T) {
 // A command line is world-readable to every process the same user runs, so a
 // credential passed as -H lands in ps for as long as that curl lives (an
 // orphaned poll can hold it for days). Every served script and every doc
-// example must hand curl a 600 config file instead. The same file also fixes
-// the older CFH trap: an unquoted variable holding two -H pairs is one argument
-// under zsh, which sends a malformed header and reads like a bad token.
+// example must hand curl a 600 config file instead.
 func TestServedSurfacesKeepCredentialsOutOfArgv(t *testing.T) {
 	srv, _ := newTestServer(t)
 	surfaces := []string{"/skill", "/skill/bridge.sh", "/skill/inject.sh", "/skill/watch.sh", "/cli.sh"}
@@ -343,9 +341,6 @@ func TestServedSurfacesKeepCredentialsOutOfArgv(t *testing.T) {
 	// still quote the old broken form as prose, which ends in "..."
 	banned := []string{
 		`-H "Authorization: Bearer $`, "-H 'Authorization: Bearer $", "-H Authorization:",
-		`-H "CF-Access-Client-Id: $`, "-H 'CF-Access-Client-Id: $", "-H CF-Access-Client",
-		`-H "CF-Access-Client-Secret: $`, "-H 'CF-Access-Client-Secret: $",
-		"$CFH", "${CFH}",
 	}
 	for _, surface := range surfaces {
 		got := getText(t, srv.URL+surface)
@@ -357,15 +352,14 @@ func TestServedSurfacesKeepCredentialsOutOfArgv(t *testing.T) {
 	}
 	// bridge.sh and inject.sh only reach a localhost coding agent, never the room
 	for _, surface := range []string{"/skill", "/skill/watch.sh", "/cli.sh"} {
-		if !strings.Contains(getText(t, srv.URL+surface), `-K "$CFRC"`) {
-			t.Errorf(`%s never passes -K "$CFRC"`, surface)
+		if !strings.Contains(getText(t, srv.URL+surface), `-K "$CURLRC"`) {
+			t.Errorf(`%s never passes -K "$CURLRC"`, surface)
 		}
 	}
 	doc := getText(t, srv.URL+"/skill")
 	for _, want := range []string{
 		`printf 'header = "Authorization: Bearer %s"`,
 		"umask 077",
-		"**zsh does not**",
 		"read another's arguments out of",
 	} {
 		if !strings.Contains(doc, want) {

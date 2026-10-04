@@ -9,18 +9,12 @@ const puppeteer = require('puppeteer-core');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const DB_URL = process.env.OPENCHATTER_DB_URL || 'postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable';
-const ACCESS_ID = process.env.ACCESS_ID || '';
-const ACCESS_SECRET = process.env.ACCESS_SECRET || '';
-const access = ACCESS_ID ? {
-  'CF-Access-Client-Id': ACCESS_ID,
-  'CF-Access-Client-Secret': ACCESS_SECRET,
-} : {};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 const tag = () => Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1e6).toString(36);
 
 async function request(path, opts = {}, retries = 3) {
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, access);
+  const headers = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const resp = await fetch(SERVER + path, {
@@ -123,7 +117,6 @@ const backdate = (message, date) => {
     const page = await browser.newPage();
     await page.emulateTimezone(process.env.TZ);
     await page.setViewport({ width: 1280, height: 850 });
-    await page.setExtraHTTPHeaders(access);
     await page.goto(SERVER + '/login', { waitUntil: 'networkidle2' });
     await page.evaluate((token) => localStorage.setItem('agentchat:session', token), humanSession);
     await page.goto(SERVER + '/w/' + slug, { waitUntil: 'networkidle2' });

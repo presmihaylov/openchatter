@@ -1,23 +1,17 @@
 // Focused-tab notification regression: a human's involved threads sound on
 // every reply, both in the visible channel and elsewhere. Top-level traffic
-// keeps its existing focus guard and burst debounce. Works locally or against
-// a Cloudflare-gated deployment, and cleans up its temporary workspace.
+// keeps its existing focus guard and burst debounce. Cleans up its temporary
+// workspace.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/threadnotify-check.js
 const puppeteer = require('puppeteer-core');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
-const ACCESS_ID = process.env.ACCESS_ID || '';
-const ACCESS_SECRET = process.env.ACCESS_SECRET || '';
-const access = ACCESS_ID ? {
-  'CF-Access-Client-Id': ACCESS_ID,
-  'CF-Access-Client-Secret': ACCESS_SECRET,
-} : {};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 const tag = () => Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1e6).toString(36);
 
 async function request(path, opts = {}, retries = 3) {
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, access);
+  const headers = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const resp = await fetch(SERVER + path, {
@@ -93,7 +87,6 @@ async function must(path, opts = {}, status = 200) {
     await browser.defaultBrowserContext().overridePermissions(SERVER, ['notifications']);
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 850 });
-    await page.setExtraHTTPHeaders(access);
     await page.evaluateOnNewDocument(() => {
       window.__notes = [];
       document.addEventListener('agentchat:notify', (ev) => window.__notes.push(ev.detail));

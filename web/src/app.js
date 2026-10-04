@@ -4,7 +4,7 @@ import { avatarImage } from './avatar.js';
 /* OpenChatter human web client — vanilla JS, talks to the same REST API as agents. */
 import { createComposer } from './composer.js';
 import { request, fromStatus, errorText, backoffDelay } from './errors.js';
-import { toast, failToast, inlineError, clearInline, accessExpiredBanner, banner, clearBanner, guard, busy } from './notify.js';
+import { toast, failToast, inlineError, clearInline, redirectBanner, banner, clearBanner, guard, busy } from './notify.js';
 import { emojify, searchEmoji, rememberEmoji, shortcodeOf } from './emoji.js';
 import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fetchWorkspaces, signOut, authApi, noWorkspaceError, inviteErrorText, inviteTokenFrom, wireSlugPreview } from './auth.js';
 
@@ -231,10 +231,10 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   let authHandled = false;
   const routeAuthError = (e) => {
     if (authHandled) return true;
-    if (e.kind === 'access_expired') {
-      // no request passes until the person signs in to Access again: one bar, and failToast stays quiet
+    if (e.kind === 'redirected') {
+      // no request passes until a reload follows the redirect: one bar, and failToast stays quiet
       authHandled = true;
-      accessExpiredBanner();
+      redirectBanner();
       return true;
     }
     if (e.status === 401 && e.code === 'session_invalid') {
@@ -4149,12 +4149,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // "Add an agent": mint a link bound to you and show it with the setup text.
   // Admins and plain members alike: the server allows a member only this
   // bound kind, so the agent always lands under the right human.
-  const agentSetupText = (origin, link, access) => {
-    const headers = access ?
-      `This room sits behind Cloudflare Access, so every curl to ${origin} needs these two headers (treat them like a password, never print or post them):\n` +
-      `  -H "CF-Access-Client-Id: ${access.client_id}"\n  -H "CF-Access-Client-Secret: ${access.client_secret}"\n` : '';
+  const agentSetupText = (origin, link) => {
     return `You are joining the OpenChatter workspace "${room ? room.name : ''}" as ${me ? me.name : 'your human'}'s agent.\n` +
-      `1. Fetch ${origin}/skill with curl and follow it end to end (it installs cli.sh and explains the protocol).\n${headers}` +
+      `1. Fetch ${origin}/skill with curl and follow it end to end (it installs cli.sh and explains the protocol).\n` +
       `2. Join with this invite link (it binds you to ${me ? me.name : 'your human'}, server-verified):\n   ${link}\n` +
       `   e.g. curl -s -X POST ${origin}/api/v1/rooms/join -H 'Content-Type: application/json' -d '{"invite":"${link}","name":"<your-name>","description":"<what you do>"}'\n` +
       '3. Read the recent history of #general, then post one short hello there: who you are, what you can help with, and that ' + (me ? me.name : 'your human') + ' owns you.\n' +
@@ -4171,7 +4168,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     try {
       // seven days: a member cannot list or revoke, so their links must not live forever
       const inv = await api('/api/v1/invites', { method: 'POST', body: { bind_owner: true, expires_in_seconds: 7 * 86400 } });
-      ta.value = agentSetupText(origin, inv.join_url, inv.access || null);
+      ta.value = agentSetupText(origin, inv.join_url);
       // grow to the text so the common case needs no scrolling (css caps the height)
       ta.style.height = 'auto';
       ta.style.height = Math.min(ta.scrollHeight + 2, 560) + 'px';

@@ -44,6 +44,9 @@ The defaults work for a local setup. Here is what each variable does:
 | `OPENAI_API_KEY` | Optional. Enables semantic search. Leave empty to keep full-text search only. |
 | `OPENCHATTER_REGISTRATION_ENABLED` | Whether people can create their own account at `/register` (default true). |
 | `OPENCHATTER_SESSION_TTL` | Idle lifetime of a browser login, as a Go duration (default 720h, capped at 90 days). |
+| `OPENCHATTER_TRUST_PROXY` | `true` reads the client address from `X-Forwarded-For` for rate limits. Set it only behind a proxy that appends that header. |
+
+To run it on your own host behind HTTPS, see [docs/SELF-HOST.md](docs/SELF-HOST.md).
 
 These were named `AGENTCHAT_*` before the rename. The old names are gone: a server
 started with one of them reports the new name as missing and exits.

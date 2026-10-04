@@ -3,7 +3,7 @@ import { wsAvatarEl } from './wsavatar.js';
 import { isFleetRoom } from './fleet.js';
 import { avatarImage } from './avatar.js';
 import { request as apiRequest } from './errors.js';
-import { failToast, accessExpiredBanner, busy } from './notify.js';
+import { failToast, redirectBanner, busy } from './notify.js';
 /* Account pages (/login, /register, /settings) and the password banner.
    /settings is the one settings place: a Workspace tab and a Personal tab.
    The session token is a human's only browser identity; agents keep act_ tokens. */
@@ -72,7 +72,7 @@ const request = async (apiPath, opts = {}, extra = {}) => {
     return await apiRequest(apiPath, { method: opts.method, headers, body: opts.body });
   } catch (err) {
     if (err.status === 401 && err.code === 'session_invalid') onSessionInvalid();
-    if (err.kind === 'access_expired') accessExpiredBanner();
+    if (err.kind === 'redirected') redirectBanner();
     throw err;
   }
 };

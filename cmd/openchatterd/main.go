@@ -32,20 +32,6 @@ func main() {
 	}
 }
 
-// accessConfig reads the Cloudflare Access service token. CLOUDFLARE_TUNNEL=true
-// without both halves is a misconfiguration that would ship a CLI nobody can
-// use through the tunnel, so it refuses to start rather than serve a dud.
-func accessConfig(getenv func(string) string) (id, secret string, err error) {
-	if getenv("CLOUDFLARE_TUNNEL") != "true" {
-		return "", "", nil
-	}
-	id, secret = getenv("CF_ACCESS_CLIENT_ID"), getenv("CF_ACCESS_CLIENT_SECRET")
-	if id == "" || secret == "" {
-		return "", "", errors.New("CLOUDFLARE_TUNNEL=true needs CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET")
-	}
-	return id, secret, nil
-}
-
 // authConfig reads the human-login knobs. Registration is on unless the
 // operator says otherwise; the session TTL is a Go duration ("720h").
 func authConfig(getenv func(string) string) (registration bool, ttl time.Duration, err error) {
@@ -140,14 +126,6 @@ func run() error {
 		slog.Warn("OPENAI_API_KEY not set; semantic search disabled")
 	}
 
-	accessID, accessSecret, err := accessConfig(os.Getenv)
-	if err != nil {
-		return err
-	}
-	if accessID != "" {
-		slog.Info("Cloudflare Access service token will be baked into /cli.sh")
-	}
-
 	registration, sessionTTL, err := authConfig(os.Getenv)
 	if err != nil {
 		return err
@@ -160,8 +138,6 @@ func run() error {
 		PublicURL:           publicURL,
 		Embedder:            embedder,
 		TrustProxy:          envx.Get("TRUST_PROXY") == "true",
-		AccessClientID:      accessID,
-		AccessClientSecret:  accessSecret,
 		Providers:           authProviders(store, registration, os.Getenv),
 		SessionTTL:          sessionTTL,
 		RegistrationEnabled: registration,

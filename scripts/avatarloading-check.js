@@ -11,18 +11,12 @@ const puppeteer = require('puppeteer-core');
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const BROWSER_SERVER = (process.env.BROWSER_SERVER || SERVER).replace(/\/$/, '');
 const OUT = process.env.OUT || 'tmp';
-const ACCESS_ID = process.env.ACCESS_ID || '';
-const ACCESS_SECRET = process.env.ACCESS_SECRET || '';
-const access = ACCESS_ID ? {
-  'CF-Access-Client-Id': ACCESS_ID,
-  'CF-Access-Client-Secret': ACCESS_SECRET,
-} : {};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assert = (ok, message) => { if (!ok) throw new Error(message); };
 const tag = () => Date.now().toString(36).slice(-7) + Math.floor(Math.random() * 1e6).toString(36);
 
 async function request(route, opts = {}, retries = 3) {
-  const headers = Object.assign({}, access, opts.body ? { 'Content-Type': 'application/json' } : {});
+  const headers = opts.body ? { 'Content-Type': 'application/json' } : {};
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const resp = await fetch(SERVER + route, {
@@ -72,7 +66,7 @@ async function uploadAvatar(token, bytes) {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'image/png' }), 'avatar.png');
   const resp = await fetch(SERVER + '/api/v1/me/avatar', {
-    method: 'POST', headers: Object.assign({}, access, { Authorization: 'Bearer ' + token }), body: form,
+    method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form,
   });
   const data = await resp.json().catch(() => ({}));
   if (resp.status !== 200) throw new Error('avatar upload -> ' + resp.status + ' ' + JSON.stringify(data));
@@ -142,7 +136,6 @@ async function uploadAvatar(token, bytes) {
     const errors = [];
     const held = [];
     await page.setViewport({ width: 1360, height: 900 });
-    await page.setExtraHTTPHeaders(access);
     page.on('pageerror', (error) => errors.push('pageerror: ' + error.message));
     page.on('console', (message) => { if (message.type() === 'error') errors.push('console: ' + message.text()); });
 

@@ -5,10 +5,6 @@ const puppeteer = require('puppeteer-core');
 
 const SERVER = (process.env.SERVER || 'http://localhost:8095').replace(/\/$/, '');
 const BROWSER_SERVER = (process.env.BROWSER_SERVER || SERVER).replace(/\/$/, '');
-const access = process.env.ACCESS_ID ? {
-  'CF-Access-Client-Id': process.env.ACCESS_ID,
-  'CF-Access-Client-Secret': process.env.ACCESS_SECRET,
-} : {};
 const tag = Date.now().toString(36).slice(-7);
 const roomName = 'pending navigation check ' + tag;
 const body = 'same optimistic body ' + tag;
@@ -16,7 +12,7 @@ let session;
 let slug;
 
 const api = async (path, opts = {}) => {
-  const headers = Object.assign({}, access, opts.body ? { 'Content-Type': 'application/json' } : {});
+  const headers = opts.body ? { 'Content-Type': 'application/json' } : {};
   if (opts.token) headers.Authorization = 'Bearer ' + opts.token;
   if (opts.slug) headers['X-Workspace-Slug'] = opts.slug;
   const response = await fetch(SERVER + path, {
@@ -66,7 +62,6 @@ const send = async (page) => {
     }
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 720 });
-    await page.setExtraHTTPHeaders(access);
     const errors = [];
     page.on('pageerror', (error) => errors.push('pageerror: ' + error.message));
     page.on('console', (message) => { if (message.type() === 'error') errors.push('console: ' + message.text()); });
@@ -99,7 +94,7 @@ const send = async (page) => {
       const out = await response.json();
       return (out.messages || []).some((message) => message.body === text);
     }, { timeout: 10000, polling: 250 }, BROWSER_SERVER, general.id, body,
-    Object.assign({}, access, { Authorization: 'Bearer ' + session, 'X-Workspace-Slug': slug }));
+    { Authorization: 'Bearer ' + session, 'X-Workspace-Slug': slug });
 
     await clickChannel(page, 'general');
     await page.waitForFunction((text) => [...document.querySelectorAll('#messages .content')]

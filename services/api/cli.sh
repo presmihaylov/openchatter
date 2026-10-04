@@ -8,12 +8,8 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.6.0"
+VERSION="2.7.0"
 DEFAULT_SERVER="{{SERVER}}"
-# Cloudflare Access service token, baked in by the server when the room sits
-# behind a Cloudflare tunnel. Empty otherwise. The env file can override both.
-DEFAULT_CF_ACCESS_CLIENT_ID="{{CF_ACCESS_CLIENT_ID}}"
-DEFAULT_CF_ACCESS_CLIENT_SECRET="{{CF_ACCESS_CLIENT_SECRET}}"
 
 usage() {
   cat <<'EOF'
@@ -130,9 +126,6 @@ FLAGS
 CONFIG
   SERVER and TOKEN come from the env file, or from $OPENCHATTER_SERVER and
   $OPENCHATTER_TOKEN. The token is never printed, not even in errors.
-  A room behind Cloudflare Access bakes its service token into this script;
-  CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET in the env file override it.
-  Both are sent as headers on every request and are never printed either.
 
 A ROOT STARTS A TOPIC, EVERYTHING ELSE IS A REPLY
   Acks, status, progress, results, corrections and heartbeats are replies to
@@ -194,20 +187,13 @@ load_config() {
   SERVER="${SERVER%/}"
   [ -n "$SERVER" ] || die "no server: set SERVER in the env file or pass --server"
   [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$OPENCHATTER_TOKEN"
-  CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID:-$DEFAULT_CF_ACCESS_CLIENT_ID}"
-  CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET:-$DEFAULT_CF_ACCESS_CLIENT_SECRET}"
   # Credentials go in a curl config file, never in argv: any process the same
-  # user runs can read another's command line out of ps. CFRC is spliced into
-  # every curl and carries the bearer token plus, behind Access, the two
-  # service-token headers.
-  CFRC=$(mktemp "${TMPDIR:-/tmp}/openchatter-curlrc.XXXXXX") || die "cannot create a credentials file"
-  chmod 600 "$CFRC"
-  trap 'rm -f "$CFRC"' EXIT INT TERM HUP
-  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$CFRC"
-  if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
-    printf 'header = "CF-Access-Client-Id: %s"\nheader = "CF-Access-Client-Secret: %s"\n' \
-      "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" >> "$CFRC"
-  fi
+  # user runs can read another's command line out of ps. CURLRC is spliced into
+  # every curl and carries the bearer token.
+  CURLRC=$(mktemp "${TMPDIR:-/tmp}/openchatter-curlrc.XXXXXX") || die "cannot create a credentials file"
+  chmod 600 "$CURLRC"
+  trap 'rm -f "$CURLRC"' EXIT INT TERM HUP
+  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$CURLRC"
 }
 
 state_dir() {
@@ -231,17 +217,16 @@ CODE=""
 # request METHOD PATH [JSON-BODY]
 request() {
   local method="$1" path="$2" body="${3:-}" out
-  local args=(-sS -X "$method" -K "$CFRC" -w $'\n%{http_code}')
+  local args=(-sS -X "$method" -K "$CURLRC" -w $'\n%{http_code}')
   if [ -n "$body" ]; then args+=(-H 'Content-Type: application/json' -d "$body"); fi
   out=$(curl "${args[@]}" "$SERVER$path") || die "cannot reach $SERVER"
   CODE="${out##*$'\n'}"
   RESP="${out%$'\n'*}"
 }
 
-# a 403 through Cloudflare Access is an HTML login page, not our JSON, so say so
-access_hint() {
-  [ -n "${CF_ACCESS_CLIENT_ID:-}" ] || return 0
-  printf ' Behind Cloudflare Access: a revoked or wrong service token also gives 403; re-download cli.sh or fix CF_ACCESS_CLIENT_ID/SECRET.'
+# The API never redirects, so a 3xx came from whatever sits in front of it.
+redirect_msg() {
+  printf 'the server answered with a redirect (HTTP %s) instead of data: something in front of %s intercepted the request' "$CODE" "$SERVER"
 }
 
 # api METHOD PATH [BODY] — dies with the server's own message on any error
@@ -249,7 +234,8 @@ api() {
   request "$@"
   case "$CODE" in
     2*) return 0 ;;
-    401|403) die "the server rejected the token (HTTP $CODE). Check the env file.$(access_hint)" ;;
+    3*) die "$(redirect_msg)" ;;
+    401|403) die "the server rejected the token (HTTP $CODE). Check the env file." ;;
     *) die "$2 failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
   esac
 }
@@ -504,7 +490,7 @@ upload_attachments() {
     [ -z "$f" ] && continue
     [ -r "$f" ] || die "cannot read attachment: $f"
     local out code resp
-    out=$(curl -sS -X POST -K "$CFRC" -F "file=@$f" -w $'\n%{http_code}' "$SERVER/api/v1/attachments") \
+    out=$(curl -sS -X POST -K "$CURLRC" -F "file=@$f" -w $'\n%{http_code}' "$SERVER/api/v1/attachments") \
       || die "cannot reach $SERVER"
     code="${out##*$'\n'}"; resp="${out%$'\n'*}"
     [ "${code:0:1}" = "2" ] || die "upload of $f failed (HTTP $code): $(json_str "$resp" 'd.get("error","")')"
@@ -862,7 +848,7 @@ cmd_download() {
   mkdir -p "$OUT"
   while read -r id name; do
     [ -z "$id" ] && continue
-    curl -fsS -K "$CFRC" "$SERVER/api/v1/attachments/$id" -o "$OUT/$name" \
+    curl -fsS -K "$CURLRC" "$SERVER/api/v1/attachments/$id" -o "$OUT/$name" \
       || die "download of $name failed"
     printf '%s\n' "$OUT/$name"
   done <<< "$list"
@@ -994,7 +980,8 @@ print(json.dumps(d))' "$1" "$2" "$args" "$TIMEOUT") || die "bad args: $args"
           fi
           printf 'openchatter: %s answered with an error: %s\n' "$1" "$(json_str "$RESP" 'd.get("error")')" >&2; return 1 ;;
         504) die "$1 did not answer in time (call $(json_str "$RESP" 'd.get("call_id")'))" ;;
-        401|403) die "the server rejected the token (HTTP $CODE).$(access_hint)" ;;
+        3*) die "$(redirect_msg)" ;;
+        401|403) die "the server rejected the token (HTTP $CODE)." ;;
         *) die "call failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
       esac
       ;;
