@@ -854,6 +854,8 @@ cmd_download() {
   local tmp
   while read -r id name; do
     [ -z "$id" ] && continue
+    # -d follows symlinks; mv would drop the file inside a directory target
+    [ -d "$OUT/$name" ] && die "$OUT/$name is a directory. Move it or pass another --out."
     # a temp file first: a proxy login page must never replace a real download
     tmp=$(mktemp "$OUT/.download.XXXXXX") || die "cannot write to $OUT"
     CODE=$(curl -sS -K "$CURLRC" -w '%{http_code}' -o "$tmp" "$SERVER/api/v1/attachments/$id") \

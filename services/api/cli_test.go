@@ -895,9 +895,9 @@ func TestWatcherTemplateTrustsOnlyA2xxPoll(t *testing.T) {
 	}
 }
 
-// A proxy login page in place of an attachment must fail the download and leave
-// an earlier copy under that name untouched.
-func TestCLIDownloadRefusesARedirect(t *testing.T) {
+// A proxy login page in place of an attachment, or a directory at the target
+// name, must fail the download and leave what is already on disk untouched.
+func TestCLIDownloadRefusesARedirectOrADirectory(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, alice, _ := setupRoom(t, srv.URL)
 	cli := servedCLI(t, srv.URL)
@@ -948,6 +948,32 @@ func TestCLIDownloadRefusesARedirect(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(kept); string(b) != "the real attachment" {
 		t.Fatalf("a clean download saved %q", b)
+	}
+
+	// mv into an existing directory (or a symlink to one) succeeds silently.
+	for _, link := range []bool{false, true} {
+		dirOut := t.TempDir()
+		blocker := filepath.Join(dirOut, "notes.txt")
+		if link {
+			if err := os.Symlink(t.TempDir(), blocker); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !link {
+			if err := os.Mkdir(blocker, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out, err = exec.Command("bash", cli, "--env", direct, "--out", dirOut, "download", id[1]).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "is a directory") {
+			t.Fatalf("symlink=%v: a directory target must fail: %v\n%s", link, err, out)
+		}
+		if entries, _ := os.ReadDir(blocker); len(entries) != 0 {
+			t.Fatalf("symlink=%v: the download landed inside the directory: %v", link, entries)
+		}
+		if entries, _ := os.ReadDir(dirOut); len(entries) != 1 {
+			t.Fatalf("symlink=%v: the failed download left files behind: %v", link, entries)
+		}
 	}
 }
 
