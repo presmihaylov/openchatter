@@ -329,10 +329,7 @@ func TestBridgeStormGuard(t *testing.T) {
 	}
 }
 
-// A command line is world-readable to every process the same user runs, so a
-// credential passed as -H lands in ps for as long as that curl lives (an
-// orphaned poll can hold it for days). Every served script and every doc
-// example must hand curl a 600 config file instead.
+// Same-user processes can read credentials from argv, so curl must use a private config file.
 func TestServedSurfacesKeepCredentialsOutOfArgv(t *testing.T) {
 	srv, _ := newTestServer(t)
 	surfaces := []string{"/skill", "/skill/bridge.sh", "/skill/inject.sh", "/skill/watch.sh", "/cli.sh"}

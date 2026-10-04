@@ -718,10 +718,23 @@ func TestWatcherTemplateWakeHookOptIn(t *testing.T) {
 	}
 }
 
-// gatedWatcher runs the watcher template through a proxy that can be switched
-// to answer /events with a proxy-style 502 page. It returns the switch,
-// the failed-poll count, and a stop that yields the watcher's output.
-func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed func() int, post func(string), stop func() string) {
+// gatedRun drives the watcher template through a proxy whose /events answer
+// a test can swap for a fault.
+type gatedRun struct {
+	setFault func(http.HandlerFunc) // nil lets /events reach the server
+	failed   func() int
+	post     func(string)
+	cursor   func() string
+	stop     func() string
+}
+
+// badGateway is a proxy 502 page whose request id differs on every hit.
+func badGateway(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusBadGateway)
+	w.Write([]byte("<html>Bad gateway, request " + strconv.FormatInt(time.Now().UnixNano(), 10) + "</html>"))
+}
+
+func gatedWatcher(t *testing.T, extraEnv ...string) gatedRun {
 	t.Helper()
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
@@ -731,19 +744,17 @@ func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed 
 	target, _ := url.Parse(srv.URL)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	var mu sync.Mutex
-	down, fails := false, 0
+	var fault http.HandlerFunc
+	fails := 0
 	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		isDown := down
-		if isDown && r.URL.Path == "/api/v1/events" {
+		f := fault
+		if f != nil && r.URL.Path == "/api/v1/events" {
 			fails++
 		}
-		n := fails
 		mu.Unlock()
-		if isDown && r.URL.Path == "/api/v1/events" {
-			// a proxy 502 page: HTML, and a request id that differs on every hit
-			w.WriteHeader(http.StatusBadGateway)
-			w.Write([]byte("<html>Bad gateway, request " + strconv.Itoa(n) + "</html>"))
+		if f != nil && r.URL.Path == "/api/v1/events" {
+			f(w, r)
 			return
 		}
 		proxy.ServeHTTP(w, r)
@@ -784,33 +795,34 @@ func gatedWatcher(t *testing.T, extraEnv ...string) (setDown func(bool), failed 
 		t.Fatal(err)
 	}
 	time.Sleep(2 * time.Second)
-	setDown = func(v bool) { mu.Lock(); down = v; mu.Unlock() }
-	failed = func() int { mu.Lock(); defer mu.Unlock(); return fails }
-	post = func(body string) {
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": body}, 201)
+	return gatedRun{
+		setFault: func(f http.HandlerFunc) { mu.Lock(); fault = f; mu.Unlock() },
+		failed:   func() int { mu.Lock(); defer mu.Unlock(); return fails },
+		post: func(body string) {
+			bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": body}, 201)
+		},
+		cursor: func() string {
+			b, _ := os.ReadFile(filepath.Join(home, ".openchatter", "room.alice.cursor"))
+			return strings.TrimSpace(string(b))
+		},
+		stop: func() string {
+			cancel()
+			_ = cmd.Wait()
+			return out.String()
+		},
 	}
-	stop = func() string {
-		cancel()
-		_ = cmd.Wait()
-		return out.String()
-	}
-	return setDown, failed, post, stop
 }
 
-// TestWatcherTemplateBacksOffOnOutage: past the quiet window a real outage is
-// worth exactly one pair of lines, however many polls fail and however much the
-// error text moves (a proxy 502 can carry a fresh request id every hit, which
-// used to print a new line each time). The cursor is untouched, so a message
-// posted during the outage still arrives.
+// Changing proxy errors must not create repeated outage alerts or lose queued messages.
 func TestWatcherTemplateBacksOffOnOutage(t *testing.T) {
-	setDown, failed, post, stop := gatedWatcher(t, "OPENCHATTER_OUTAGE_QUIET=2")
-	setDown(true)
+	g := gatedWatcher(t, "OPENCHATTER_OUTAGE_QUIET=2")
+	g.setFault(badGateway)
 	time.Sleep(5 * time.Second)
-	post("@alice posted while you were down")
-	setDown(false)
-	n := failed()
+	g.post("@alice posted while you were down")
+	g.setFault(nil)
+	n := g.failed()
 	time.Sleep(3 * time.Second)
-	got := stop()
+	got := g.stop()
 	if n < 3 {
 		t.Fatalf("expected at least 3 failed polls, got %d:\n%s", n, got)
 	}
@@ -825,29 +837,117 @@ func TestWatcherTemplateBacksOffOnOutage(t *testing.T) {
 	}
 }
 
-// TestWatcherTemplateSilentUnderFiveMinutes: a deploy restart, a network blip and
-// a 502 flap all heal well inside five minutes. Each one used to cost every
-// online agent two wakes (ERROR + BACK); a whole run of failed polls inside the
-// window now prints nothing at all, and the mention posted during it arrives.
+// Brief outages must stay quiet without losing queued messages.
 func TestWatcherTemplateSilentUnderFiveMinutes(t *testing.T) {
-	setDown, failed, post, stop := gatedWatcher(t)
-	setDown(true)
+	g := gatedWatcher(t)
+	g.setFault(badGateway)
 	deadline := time.Now().Add(6 * time.Second)
-	for failed() < 3 && time.Now().Before(deadline) {
+	for g.failed() < 3 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
-	if n := failed(); n < 3 {
+	if n := g.failed(); n < 3 {
 		t.Fatalf("wanted several failed polls inside the window, got %d", n)
 	}
-	setDown(false)
-	post("@alice posted during the blip")
+	g.setFault(nil)
+	g.post("@alice posted during the blip")
 	time.Sleep(3 * time.Second)
-	got := stop()
+	got := g.stop()
 	if strings.Contains(got, "WATCHER-ERROR: HTTP 502") || strings.Contains(got, "WATCHER-BACK") {
 		t.Fatalf("an outage inside the quiet window must be silent:\n%s", got)
 	}
 	if !strings.Contains(got, "posted during the blip") {
 		t.Fatalf("a mention posted during the blip was lost:\n%s", got)
+	}
+}
+
+// A redirect or token error can carry a cursor-shaped body; it must not move the
+// cursor, and the error must name which of the two it was.
+func TestWatcherTemplateTrustsOnlyA2xxPoll(t *testing.T) {
+	for _, tc := range []struct {
+		code int
+		want string
+	}{
+		{http.StatusFound, "WATCHER-ERROR: HTTP 302 redirect"},
+		{http.StatusUnauthorized, "WATCHER-ERROR: HTTP 401 token rejected"},
+	} {
+		t.Run(strconv.Itoa(tc.code), func(t *testing.T) {
+			g := gatedWatcher(t, "OPENCHATTER_OUTAGE_QUIET=0")
+			before := g.cursor()
+			g.setFault(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", "https://login.example.com/sign-in")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.code)
+				w.Write([]byte(`{"cursor":999999,"events":[]}`))
+			})
+			deadline := time.Now().Add(6 * time.Second)
+			for g.failed() < 2 && time.Now().Before(deadline) {
+				time.Sleep(50 * time.Millisecond)
+			}
+			after := g.cursor()
+			got := g.stop()
+			if before == "" || after != before {
+				t.Fatalf("HTTP %d moved the cursor from %q to %q:\n%s", tc.code, before, after, got)
+			}
+			if c := strings.Count(got, tc.want); c != 1 {
+				t.Fatalf("want one %q line, got %d:\n%s", tc.want, c, got)
+			}
+		})
+	}
+}
+
+// A proxy login page in place of an attachment must fail the download and leave
+// an earlier copy under that name untouched.
+func TestCLIDownloadRefusesARedirect(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	src := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(src, []byte("the real attachment"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	direct := writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n")
+	sent, err := exec.Command("bash", cli, "--env", direct, "--json", "send", "general", "@bob see attached", "--attach", src).Output()
+	if err != nil {
+		t.Fatalf("send with an attachment: %v\n%s", err, sent)
+	}
+	id := regexp.MustCompile(`"id": "([0-9a-f-]{36})"`).FindStringSubmatch(string(sent))
+	if id == nil {
+		t.Fatalf("no message id in the send output:\n%s", sent)
+	}
+
+	target, _ := url.Parse(srv.URL)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/attachments/") {
+			http.Redirect(w, r, "https://login.example.com/sign-in", http.StatusFound)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(gate.Close)
+	saveDir := t.TempDir()
+	kept := filepath.Join(saveDir, "notes.txt")
+	if err := os.WriteFile(kept, []byte("an earlier copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gated := writeEnv(t, "SERVER="+gate.URL+"\nTOKEN="+alice.token+"\n")
+	out, err := exec.Command("bash", cli, "--env", gated, "--out", saveDir, "download", id[1]).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "redirect (HTTP 302)") {
+		t.Fatalf("a redirected download must fail as a redirect: %v\n%s", err, out)
+	}
+	if b, _ := os.ReadFile(kept); string(b) != "an earlier copy" {
+		t.Fatalf("the redirect overwrote the earlier copy with %q", b)
+	}
+	if entries, _ := os.ReadDir(saveDir); len(entries) != 1 {
+		t.Fatalf("the failed download left files behind: %v", entries)
+	}
+
+	out, err = exec.Command("bash", cli, "--env", direct, "--out", saveDir, "download", id[1]).CombinedOutput()
+	if err != nil {
+		t.Fatalf("a clean download: %v\n%s", err, out)
+	}
+	if b, _ := os.ReadFile(kept); string(b) != "the real attachment" {
+		t.Fatalf("a clean download saved %q", b)
 	}
 }
 

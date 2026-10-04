@@ -229,15 +229,20 @@ redirect_msg() {
   printf 'the server answered with a redirect (HTTP %s) instead of data: something in front of %s intercepted the request' "$CODE" "$SERVER"
 }
 
+# fail_status WHAT — dies on a non-2xx CODE, naming a redirect apart from a bad token
+fail_status() {
+  case "$CODE" in
+    3*) die "$(redirect_msg)" ;;
+    401|403) die "the server rejected the token (HTTP $CODE). Check the env file." ;;
+    *) die "$1 failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
+  esac
+}
+
 # api METHOD PATH [BODY] — dies with the server's own message on any error
 api() {
   request "$@"
-  case "$CODE" in
-    2*) return 0 ;;
-    3*) die "$(redirect_msg)" ;;
-    401|403) die "the server rejected the token (HTTP $CODE). Check the env file." ;;
-    *) die "$2 failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
-  esac
+  case "$CODE" in 2*) return 0 ;; esac
+  fail_status "$2"
 }
 
 # json_str JSON EXPR — evaluate a python expression over the parsed body `d`
@@ -475,7 +480,7 @@ print(json.dumps(p))
     printf 'openchatter: to write about a handle instead of tagging it, put it in `backticks`, or resend with --force-mentions\n' >&2
     exit 1
   fi
-  [ "${CODE:0:1}" = "2" ] || die "post failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error","")')"
+  case "$CODE" in 2*) ;; *) fail_status "post" ;; esac
   local warn
   warn=$(json_str "$RESP" '"\n".join(d.get("warnings") or [])')
   [ -n "$warn" ] && printf 'openchatter: %s\n' "$warn" >&2
@@ -489,12 +494,12 @@ upload_attachments() {
   for f in "${ATTACH[@]:-}"; do
     [ -z "$f" ] && continue
     [ -r "$f" ] || die "cannot read attachment: $f"
-    local out code resp
+    local out
     out=$(curl -sS -X POST -K "$CURLRC" -F "file=@$f" -w $'\n%{http_code}' "$SERVER/api/v1/attachments") \
       || die "cannot reach $SERVER"
-    code="${out##*$'\n'}"; resp="${out%$'\n'*}"
-    [ "${code:0:1}" = "2" ] || die "upload of $f failed (HTTP $code): $(json_str "$resp" 'd.get("error","")')"
-    ids="$ids $(json_str "$resp" 'd["id"]')"
+    CODE="${out##*$'\n'}"; RESP="${out%$'\n'*}"
+    case "$CODE" in 2*) ;; *) fail_status "upload of $f" ;; esac
+    ids="$ids $(json_str "$RESP" 'd["id"]')"
   done
   printf '%s' "${ids# }"
 }
@@ -846,11 +851,17 @@ cmd_download() {
   local list; list=$(json_str "$RESP" '"\n".join("%s %s" % (a["id"], a["filename"]) for a in d.get("attachments") or [])')
   [ -z "$list" ] && { printf 'no attachments on %s\n' "$1"; return; }
   mkdir -p "$OUT"
+  local tmp
   while read -r id name; do
     [ -z "$id" ] && continue
-    curl -fsS -K "$CURLRC" "$SERVER/api/v1/attachments/$id" -o "$OUT/$name" \
-      || die "download of $name failed"
-    printf '%s\n' "$OUT/$name"
+    # a temp file first: a proxy login page must never replace a real download
+    tmp=$(mktemp "$OUT/.download.XXXXXX") || die "cannot write to $OUT"
+    CODE=$(curl -sS -K "$CURLRC" -w '%{http_code}' -o "$tmp" "$SERVER/api/v1/attachments/$id") \
+      || { rm -f "$tmp"; die "cannot reach $SERVER"; }
+    case "$CODE" in
+      2*) mv -f "$tmp" "$OUT/$name"; printf '%s\n' "$OUT/$name" ;;
+      *) RESP=$(head -c 4096 "$tmp"); rm -f "$tmp"; fail_status "download of $name" ;;
+    esac
   done <<< "$list"
 }
 
@@ -889,7 +900,7 @@ print(json.dumps(d))' "$1" "$2" "$REM_TZ")
     201) ;;
     400) die "$(json_str "$RESP" 'd.get("error","")')" ;;
     401|403) die "the server rejected the request (HTTP $CODE): $(json_str "$RESP" 'd.get("error","")')" ;;
-    *) die "remind failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
+    *) fail_status "remind" ;;
   esac
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   echo 'reminder set:'
@@ -919,7 +930,7 @@ print(json.dumps(d))' "$REM_TEXT" "$REM_SCHEDULE" "$REM_TZ")
       case "$CODE" in
         200) ;;
         400) die "$(json_str "$RESP" 'd.get("error","")')" ;;
-        *) die "edit failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
+        *) fail_status "edit" ;;
       esac
       if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
       print_reminders "$RESP" ;;
@@ -980,9 +991,7 @@ print(json.dumps(d))' "$1" "$2" "$args" "$TIMEOUT") || die "bad args: $args"
           fi
           printf 'openchatter: %s answered with an error: %s\n' "$1" "$(json_str "$RESP" 'd.get("error")')" >&2; return 1 ;;
         504) die "$1 did not answer in time (call $(json_str "$RESP" 'd.get("call_id")'))" ;;
-        3*) die "$(redirect_msg)" ;;
-        401|403) die "the server rejected the token (HTTP $CODE)." ;;
-        *) die "call failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
+        *) fail_status "call" ;;
       esac
       ;;
     result)

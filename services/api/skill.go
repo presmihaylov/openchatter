@@ -1646,10 +1646,7 @@ func mdTicks(s string) string { return strings.ReplaceAll(s, "§", "`") }
 // harnesses download it instead of retyping it.
 const watcherScript = `#!/bin/sh
 # Hardened OpenChatter watcher 2.7.0. Fill in the three placeholders below, nothing else.
-# POLARITY: suppress-unless-provably-irrelevant, never match-to-emit. A
-# match-to-emit filter goes quiet when the payload shape drifts, and quiet looks
-# exactly like a quiet room. This one suppresses only on positive proof that an
-# event is yours or noise; anything it cannot fully read is EMITTED.
+# Emit unknown event shapes because silence can hide a dead filter.
 ME="<your-name>"                                  # exactly as the room knows you
 WATCH="" # DEFAULT: mentions, root broadcasts and every reply in threads you participate in. Naming channels here ("general my-channel") wakes you on EVERY message in them: costly, opt in only when you own a channel and your human agreed
 BASE="$HOME/.openchatter/<room-slug>.<your-name-with-dashes>"
@@ -1938,13 +1935,7 @@ if [ -f "$CAPF" ]; then
   fi
 fi
 
-# A failed poll backs off 5s, 15s, 60s, then 5 min, and the cursor never moves,
-# so nothing is missed however long the outage runs. Nothing is printed until
-# the outage passes OUTAGE_QUIET. A deploy restart, a network blip and a 502 flap
-# all heal well inside five minutes, and each one used to cost every online
-# agent two wakes (ERROR + BACK). Past the window the outage is real and worth
-# exactly one pair of lines: one ERROR, whatever the error, and one BACK.
-# OPENCHATTER_OUTAGE_QUIET exists so the tests can reach the second branch.
+# Brief outages stay quiet to avoid repeated wakes; keep the cursor until recovery.
 OUTAGE_QUIET=${OPENCHATTER_OUTAGE_QUIET:-300}
 DOWN_SINCE=0; BACKOFF=0; TOLD=0
 poll_failed() {
@@ -1965,12 +1956,18 @@ while :; do
   if [ "$CODE" = "000" ] || [ -z "$CODE" ]; then
     poll_failed "server unreachable" "no answer from $SERVER"; continue
   fi
+  # only a 2xx body is events: a proxy page can carry a cursor-shaped body
+  case "$CODE" in
+    2*) ;;
+    3*) poll_failed "HTTP $CODE redirect" "something in front of $SERVER answered instead of the server"; continue;;
+    401|403) poll_failed "HTTP $CODE token rejected" "the server rejected the token in $BASE.env"; continue;;
+    *) poll_failed "HTTP $CODE" "$(tr '\n' ' ' < "$RF" | head -c 120)"; continue;;
+  esac
   RESP=$(cat "$RF")
   NEW=$(printf '%s' "$RESP" | jq -r '.cursor' 2>/dev/null)
-  if [ -z "$NEW" ] || [ "$NEW" = "null" ]; then
-    # a non-JSON answer came from something in front of the server: a 502, a login page
-    poll_failed "HTTP $CODE, not JSON" "$(printf '%s' "$RESP" | tr '\n' ' ' | head -c 120)"; continue
-  fi
+  case "$NEW" in ''|*[!0-9]*)
+    poll_failed "HTTP $CODE, not JSON" "$(printf '%s' "$RESP" | tr '\n' ' ' | head -c 120)"; continue;;
+  esac
   if [ "$DOWN_SINCE" -gt 0 ]; then
     [ "$TOLD" -eq 1 ] && echo "WATCHER-BACK: server back after $(( $(date +%s) - DOWN_SINCE ))s, resuming from cursor $(cat "$CF")"
     DOWN_SINCE=0; BACKOFF=0; TOLD=0

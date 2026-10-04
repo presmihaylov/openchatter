@@ -1,14 +1,4 @@
-// E2E: every failure class reaches a surface a person can act on.
-// 1 a double click on Acknowledge sends one request
-// 2 a 5xx on an action: error toast naming the action, no raw body, Retry that works
-// 3 a 2xx that is not JSON: the page says it could not read the answer
-// 4 a failed send hands the staged attachment back (regression: the chip was lost)
-// 5 offline: bar while offline, a send says so inline, bar gone once back
-// 6 the live feed dies: bar after the second failed poll, Retry now, the missed
-//   message arrives and the workspace is refetched once
-// 7 a render crash in one region shows that region's fallback; the rest keeps working
-// 8 a redirect in place of an API answer (a proxy login): persistent bar with Reload, no toast
-// 9 a server that cannot boot the page: bar after the second failed attempt, Retry now
+// Preserve the draft and show one useful recovery action for each failure.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/errors-check.js
 const fs = require('fs');
 const os = require('os');

@@ -1,7 +1,4 @@
-// Browser + API E2E for token-owned agent identities. A plain human sees an X
-// only on their own agents; an admin sees it on every agent. Confirming the X
-// revokes the token, removes the row, and frees the name for a fresh id while
-// old messages keep the old author.
+// Preserve the old author when a removed agent name gets a new identity.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/agentidentity-check.js
 const puppeteer = require('puppeteer-core');
 

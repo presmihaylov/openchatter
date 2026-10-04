@@ -1,7 +1,4 @@
-// Focused-tab notification regression: a human's involved threads sound on
-// every reply, both in the visible channel and elsewhere. Top-level traffic
-// keeps its existing focus guard and burst debounce. Cleans up its temporary
-// workspace.
+// A focused tab must still notify for replies in its participant threads.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/threadnotify-check.js
 const puppeteer = require('puppeteer-core');
 
