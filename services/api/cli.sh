@@ -294,7 +294,7 @@ fail_status() {
     3*) die "$(redirect_msg)" ;;
     401) die "the server rejected the token (HTTP 401). Check the env file." ;;
     # a 403 means the token works but this action is not allowed; the server says why
-    *) die "$1 failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
+    *) die "$1 failed (HTTP $CODE): $(json_opt "$RESP" error)" ;;
   esac
 }
 
@@ -305,17 +305,127 @@ api() {
   fail_status "$2"
 }
 
-# json_str JSON EXPR — evaluate a python expression over the parsed body `d`
-json_str() {
+# JSON helpers. Each one is a fixed python program that reads the body as data;
+# no expression from the shell is ever evaluated.
+
+# json_opt JSON KEY... — walk KEY... (object keys; list indices when the value is
+# a list) and print the value. Prints nothing for a body that is not JSON, a
+# missing key, or null. Lenient on purpose: it serves optional fields and error
+# messages, where a proxy's HTML page must still produce a readable `die`.
+json_opt() {
   printf '%s' "$1" | python3 -c '
 import sys, json
 try:
-    d = json.load(sys.stdin)
+    v = json.load(sys.stdin)
+    for k in sys.argv[1:]:
+        v = v[int(k)] if isinstance(v, list) else v[k]
 except Exception:
     sys.exit(0)
-v = eval(sys.argv[1], {"d": d})
 print("" if v is None else v)
-' "$2" 2>/dev/null || true
+' "${@:2}"
+}
+
+# json_get JSON KEY... — like json_opt, but a body that is not JSON or lacks the
+# key is an error: it says so on stderr and exits 1. Use it as a plain
+# assignment (`x=$(json_get ...)`) so set -e stops the script.
+json_get() {
+  printf '%s' "$1" | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin)
+    for k in sys.argv[1:]:
+        v = v[int(k)] if isinstance(v, list) else v[k]
+except Exception:
+    sys.stderr.write("openchatter: unexpected response from the server (no %s)\n" % ".".join(sys.argv[1:]))
+    sys.exit(1)
+print("" if v is None else v)
+' "${@:2}"
+}
+
+# json_len JSON KEY — how many items the list at KEY holds (0 when absent)
+json_len() {
+  printf '%s' "$1" | python3 -c '
+import sys, json
+try:
+    n = len(json.load(sys.stdin).get(sys.argv[1]) or [])
+except Exception:
+    sys.stderr.write("openchatter: unexpected response from the server (not a JSON object)\n")
+    sys.exit(1)
+print(n)
+' "$2"
+}
+
+# json_render KIND JSON — the plain-text listing for one response shape
+json_render() {
+  printf '%s' "$2" | python3 -c '
+import sys, json
+
+def pending(d):
+    if not d["pending"]:
+        return "no unacked asks"
+    return "\n".join(
+        "%s  from %-16s in #%-14s %s  %s" % (p["message_id"], p["author_name"], p["channel_name"], p["reason"], p["excerpt"])
+        for p in d["pending"])
+
+def channels(d):
+    return "\n".join(
+        "%-24s %s%s" % (c["name"], c["id"], "  (private)" if c.get("private") else "")
+        for c in d["channels"])
+
+def members(d):
+    lines = []
+    for m in d["members"]:
+        if m.get("in_channel") is None:
+            where = ""
+        else:
+            where = "  in channel" if m["in_channel"] else "  NOT in channel"
+        state = "online" if m["online"] else ("dormant" if m["dormant"] else "offline")
+        lines.append("%-20s %-7s %s%s" % (m["handle"], "human" if m["is_human"] else "agent", state, where))
+    return "\n".join(lines)
+
+def whoami(d):
+    return "%s (%s, %s)" % (d["name"], "human" if d["is_human"] else "agent", d["role"])
+
+def attachments(d):
+    return "\n".join("%s %s" % (a["id"], a["filename"]) for a in d.get("attachments") or [])
+
+def capabilities(d):
+    return ", ".join(c["name"] for c in d["capabilities"])
+
+def handles(d):
+    return " ".join(m["handle"] for m in d.get("members", []))
+
+def warnings(d):
+    return "\n".join(d.get("warnings") or [])
+
+try:
+    out = globals()[sys.argv[1]](json.load(sys.stdin))
+except Exception:
+    sys.stderr.write("openchatter: unexpected response from the server (cannot read the %s)\n" % sys.argv[1])
+    sys.exit(1)
+print(out)
+' "$1"
+}
+
+# pick_messages JSON [pretty] — the body's messages as {"messages": [...]},
+# narrowed by --since and flipped by --order newest. SINCE and ORDER travel as
+# environment data, never as code.
+pick_messages() {
+  printf '%s' "$1" | SINCE="$SINCE" ORDER="$ORDER" INDENT="${2:+2}" python3 -c '
+import sys, os, json
+try:
+    msgs = json.load(sys.stdin)["messages"] or []
+    since = os.environ["SINCE"]
+    if since:
+        msgs = [m for m in msgs if m["created_at"] > since]
+    if os.environ["ORDER"] == "newest":
+        msgs.reverse()
+except Exception:
+    sys.stderr.write("openchatter: unexpected response from the server (no messages list)\n")
+    sys.exit(1)
+indent = int(os.environ["INDENT"]) if os.environ["INDENT"] else None
+print(json.dumps({"messages": msgs}, indent=indent))
+'
 }
 
 json_pretty() { printf '%s' "$1" | python3 -m json.tool; }
@@ -358,12 +468,17 @@ def thread_tag(m):
     return "root, %d %s" % (n, "reply" if n == 1 else "replies")
 '
 
-# print_messages JSON EXPR — EXPR selects the message list out of the body
+# print_messages JSON SELECTOR — SELECTOR is `messages` (the body's list) or `self` (the body is one message)
 print_messages() {
   printf '%s' "$1" | python3 -c "$WHEN_PY$THREAD_TAG_PY"'
 import sys, json, textwrap
-d = json.load(sys.stdin)
-msgs = eval(sys.argv[1], {"d": d}) or []
+try:
+    d = json.load(sys.stdin)
+    msgs = ([d] if sys.argv[1] == "self" else d["messages"]) or []
+    if sys.argv[1] == "self": d["id"]
+except Exception:
+    sys.stderr.write("openchatter: unexpected response from the server (no %s)\n" % ("message" if sys.argv[1] == "self" else "messages list"))
+    sys.exit(1)
 for m in msgs:
     when = when_str(m.get("created_at"))
     tags = [thread_tag(m)]
@@ -534,18 +649,19 @@ print(json.dumps(p))
   if [ "$CODE" = "422" ]; then
     # the roster moved under us: refresh the cache so the next run is right
     refresh_members
-    printf 'openchatter: %s\n' "$(json_str "$RESP" 'd.get("error","unknown mentions")')" >&2
-    printf 'openchatter: current handles: %s\n' "$(json_str "$RESP" '" ".join(m["handle"] for m in d.get("members",[]))')" >&2
+    printf 'openchatter: %s\n' "$(json_opt "$RESP" error)" >&2
+    printf 'openchatter: current handles: %s\n' "$(json_render handles "$RESP")" >&2
     # writing ABOUT a dead handle is legitimate, so always name the way through
     printf 'openchatter: to write about a handle instead of tagging it, put it in `backticks`, or resend with --force-mentions\n' >&2
     exit 1
   fi
   case "$CODE" in 2*) ;; *) fail_status "post" ;; esac
   local warn
-  warn=$(json_str "$RESP" '"\n".join(d.get("warnings") or [])')
+  warn=$(json_render warnings "$RESP")
   [ -n "$warn" ] && printf 'openchatter: %s\n' "$warn" >&2
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; else
-    printf 'posted %s\n' "$(json_str "$RESP" 'd["id"]')"
+    local posted; posted=$(json_get "$RESP" id)
+    printf 'posted %s\n' "$posted"
   fi
 }
 
@@ -559,7 +675,8 @@ upload_attachments() {
       -w $'\n%{http_code}' "$SERVER/api/v1/attachments"
     CODE="${FETCHED##*$'\n'}"; RESP="${FETCHED%$'\n'*}"
     case "$CODE" in 2*) ;; *) fail_status "upload of $f" ;; esac
-    ids="$ids $(json_str "$RESP" 'd["id"]')"
+    local aid; aid=$(json_get "$RESP" id)
+    ids="$ids $aid"
   done
   printf '%s' "${ids# }"
 }
@@ -567,10 +684,11 @@ upload_attachments() {
 # thread_root_of MESSAGE-ID — a reply to a reply still lands in the same thread
 thread_root_of() {
   api GET "/api/v1/messages/$1"
-  json_str "$RESP" 'd.get("thread_root_id") or d["id"]'
+  local root; root=$(json_opt "$RESP" thread_root_id)
+  if [ -n "$root" ]; then printf '%s' "$root"; else json_get "$RESP" id; fi
 }
 
-channel_of() { api GET "/api/v1/messages/$1"; json_str "$RESP" 'd["channel_id"]'; }
+channel_of() { api GET "/api/v1/messages/$1"; json_get "$RESP" channel_id; }
 
 # ---------- commands ----------
 
@@ -630,7 +748,7 @@ cmd_send() {
 # fallback is never "send".
 latest_thread_in() {
   api GET "/api/v1/channels/$1/threads"
-  local root; root=$(json_str "$RESP" '(d.get("threads") or [{}])[0].get("root_id", "")')
+  local root; root=$(json_opt "$RESP" threads 0 root_id)
   [ -n "$root" ] || die "no thread you are part of in $1 yet; reply <message-id> to one, or send --new-topic to start one"
   printf '%s' "$root"
 }
@@ -658,14 +776,10 @@ cmd_read() {
   [ $# -ge 1 ] || die "usage: cli.sh read <channel>"
   api GET "/api/v1/channels/$1/messages?limit=$LIMIT"
   # the list route has no "after" param, so a --since timestamp filters here
-  local pick='d["messages"]'
-  [ -n "$SINCE" ] && pick='[m for m in d["messages"] if m["created_at"] > "'"$SINCE"'"]'
-  [ "$ORDER" = "newest" ] && pick="list(reversed($pick))"
-  if [ "$JSON" = "1" ]; then
-    printf '%s' "$RESP" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(json.dumps({"messages":eval(sys.argv[1],{"d":d})},indent=2))' "$pick"
-    return
-  fi
-  print_messages "$RESP" "$pick"
+  local picked
+  if [ "$JSON" = "1" ]; then pick_messages "$RESP" pretty; return; fi
+  picked=$(pick_messages "$RESP")
+  print_messages "$picked" messages
 }
 
 cmd_thread() {
@@ -673,14 +787,14 @@ cmd_thread() {
   local root; root=$(thread_root_of "$1")
   api GET "/api/v1/threads/$root"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  print_messages "$RESP" 'd["messages"]'
+  print_messages "$RESP" messages
 }
 
 cmd_msg() {
   [ $# -ge 1 ] || die "usage: cli.sh msg <message-id>"
   api GET "/api/v1/messages/$1"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  print_messages "$RESP" '[d]'
+  print_messages "$RESP" self
 }
 
 # search <query>: one call to the hybrid endpoint; filters AND together
@@ -705,7 +819,7 @@ print(urllib.parse.urlencode(q))
 ' "$*" "$LIMIT" channel "$SEARCH_IN" since "$SEARCH_AFTER" until "$SEARCH_BEFORE" kind "$SEARCH_KIND" has_attachment "$SEARCH_HAS")
   api GET "/api/v1/search/hybrid?$qs"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  [ "$(json_str "$RESP" 'd.get("semantic")')" = "False" ] && printf 'note: semantic search is off on this server; text matches only\n' >&2
+  [ "$(json_opt "$RESP" semantic)" = "False" ] && printf 'note: semantic search is off on this server; text matches only\n' >&2
   printf '%s' "$RESP" | python3 -c "$WHEN_PY$THREAD_TAG_PY"'
 import sys, json, textwrap
 d = json.load(sys.stdin)
@@ -728,17 +842,18 @@ cmd_mentions() {
   if [ -z "$since" ]; then
     # no cursor yet: start from now, so the first run does not replay the room
     api GET "/api/v1/events"
-    since=$(json_str "$RESP" 'd["cursor"]')
+    since=$(json_get "$RESP" cursor)
   fi
   HOLD=$(num_or "$WAIT" 0)
   api GET "/api/v1/events?after=$since&relevant=true&limit=$LIMIT&wait=$WAIT"
   HOLD=0
-  local cursor; cursor=$(json_str "$RESP" 'd["cursor"]')
+  local cursor; cursor=$(json_get "$RESP" cursor)
   [ -n "$cursor" ] && printf '%s' "$cursor" > "$(cursor_file)"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   local events="$RESP"
   api GET /api/v1/me
-  print_events "$events" "$(json_str "$RESP" 'd["name"]')" "cursor: $cursor"
+  local me; me=$(json_get "$RESP" name)
+  print_events "$events" "$me" "cursor: $cursor"
 }
 
 # one line per message event, then the body: "when author [id] seq N (why, thread tag)".
@@ -786,10 +901,11 @@ cmd_inbox() {
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   local events="$RESP"
   api GET /api/v1/me
-  local n; n=$(json_str "$events" 'len(d.get("events", []))')
+  local n; n=$(json_len "$events" events)
   local trailer="$n drained: confirm each with cli.sh seen <seq> once you acted on it"
   [ "$PEEK" = "1" ] && trailer="$n unacked (peek: nothing marked)"
-  print_events "$events" "$(json_str "$RESP" 'd["name"]')" "$trailer"
+  local me; me=$(json_get "$RESP" name)
+  print_events "$events" "$me" "$trailer"
 }
 
 cmd_offline() {
@@ -807,17 +923,18 @@ cmd_online() {
   case "$after" in ''|*[!0-9]*) ;; *) body="{\"status\":\"online\",\"after\":$after}" ;; esac
   api POST /api/v1/me/presence "$body"
   # only a real catch-up may move the cursor; "not offline" must never skip what the poll still owes
-  if [ "$(json_str "$RESP" 'd.get("was_offline")')" = "True" ]; then
-    local cursor; cursor=$(json_str "$RESP" 'd["cursor"]')
+  if [ "$(json_opt "$RESP" was_offline)" = "True" ]; then
+    local cursor; cursor=$(json_get "$RESP" cursor)
     [ -n "$cursor" ] && printf '%s' "$cursor" > "$(cursor_file)"
   fi
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   local events="$RESP"
-  local n; n=$(json_str "$events" 'len(d.get("events", []))')
+  local n; n=$(json_len "$events" events)
   local trailer="online again; $n missed while offline, printed once: confirm each with cli.sh seen <seq> once you acted on it"
-  [ "$(json_str "$events" 'd.get("was_offline")')" = "True" ] || trailer="online (you were not offline); nothing to catch up"
+  [ "$(json_opt "$events" was_offline)" = "True" ] || trailer="online (you were not offline); nothing to catch up"
   api GET /api/v1/me
-  print_events "$events" "$(json_str "$RESP" 'd["name"]')" "$trailer"
+  local me; me=$(json_get "$RESP" name)
+  print_events "$events" "$me" "$trailer"
 }
 
 # ack now means the ASK-level receipt: it takes a message id and paints the check
@@ -843,15 +960,13 @@ cmd_seen() {
 cmd_pending() {
   api GET /api/v1/me/pending-acks
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  json_str "$RESP" '"no unacked asks" if not d["pending"] else "\n".join(
-      "%s  from %-16s in #%-14s %s  %s" % (p["message_id"], p["author_name"], p["channel_name"], p["reason"], p["excerpt"])
-      for p in d["pending"])'
+  json_render pending "$RESP"
 }
 
 cmd_channels() {
   api GET /api/v1/channels
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  json_str "$RESP" '"\n".join("%-24s %s%s" % (c["name"], c["id"], "  (private)" if c.get("private") else "") for c in d["channels"])'
+  json_render channels "$RESP"
 }
 
 cmd_members() {
@@ -859,17 +974,13 @@ cmd_members() {
   [ -n "$CHANNEL" ] && q="?channel=$CHANNEL"
   api GET "/api/v1/members$q"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  json_str "$RESP" '"\n".join("%-20s %-7s %s%s" % (
-      m["handle"], "human" if m["is_human"] else "agent",
-      "online" if m["online"] else ("dormant" if m["dormant"] else "offline"),
-      "" if m.get("in_channel") is None else ("  in channel" if m["in_channel"] else "  NOT in channel"),
-  ) for m in d["members"])'
+  json_render members "$RESP"
 }
 
 cmd_whoami() {
   api GET /api/v1/me
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
-  json_str "$RESP" '"%s (%s, %s)" % (d["name"], "human" if d["is_human"] else "agent", d["role"])'
+  json_render whoami "$RESP"
 }
 
 cmd_react() {
@@ -910,7 +1021,7 @@ cmd_unreact() {
 cmd_download() {
   [ $# -ge 1 ] || die "usage: cli.sh download <message-id>"
   api GET "/api/v1/messages/$1"
-  local list; list=$(json_str "$RESP" '"\n".join("%s %s" % (a["id"], a["filename"]) for a in d.get("attachments") or [])')
+  local list; list=$(json_render attachments "$RESP")
   [ -z "$list" ] && { printf 'no attachments on %s\n' "$1"; return; }
   mkdir -p "$OUT"
   local tmp
@@ -962,8 +1073,8 @@ print(json.dumps(d))' "$1" "$2" "$REM_TZ")
   request POST /api/v1/me/reminders "$body"
   case "$CODE" in
     201) ;;
-    400) die "$(json_str "$RESP" 'd.get("error","")')" ;;
-    401|403) die "the server rejected the request (HTTP $CODE): $(json_str "$RESP" 'd.get("error","")')" ;;
+    400) die "$(json_opt "$RESP" error)" ;;
+    401|403) die "the server rejected the request (HTTP $CODE): $(json_opt "$RESP" error)" ;;
     *) fail_status "remind" ;;
   esac
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
@@ -993,7 +1104,7 @@ print(json.dumps(d))' "$REM_TEXT" "$REM_SCHEDULE" "$REM_TZ")
       request PATCH "/api/v1/me/reminders/$1" "$body"
       case "$CODE" in
         200) ;;
-        400) die "$(json_str "$RESP" 'd.get("error","")')" ;;
+        400) die "$(json_opt "$RESP" error)" ;;
         *) fail_status "edit" ;;
       esac
       if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
@@ -1015,7 +1126,8 @@ d = json.load(open(sys.argv[1]))
 if isinstance(d, list): d = {"capabilities": d}
 print(json.dumps(d))' "$1") || die "$1 is not valid JSON"
       api PUT "/api/v1/me/capabilities" "$body"
-      printf 'registered %s capabilities: %s\n' "$(json_str "$RESP" 'len(d["capabilities"])')" "$(json_str "$RESP" '", ".join(c["name"] for c in d["capabilities"])')"
+      local ncap names; ncap=$(json_len "$RESP" capabilities); names=$(json_render capabilities "$RESP")
+      printf 'registered %s capabilities: %s\n' "$ncap" "$names"
       ;;
     list)
       if [ $# -ge 1 ]; then
@@ -1051,12 +1163,12 @@ print(json.dumps(d))' "$1" "$2" "$args" "$TIMEOUT") || die "bad args: $args"
       HOLD=0
       case "$CODE" in
         200)
-          if [ "$(json_str "$RESP" 'd.get("state")')" = "done" ]; then
+          if [ "$(json_opt "$RESP" state)" = "done" ]; then
             printf '%s' "$RESP" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("result"), indent=2))'
             return 0
           fi
-          printf 'openchatter: %s answered with an error: %s\n' "$1" "$(json_str "$RESP" 'd.get("error")')" >&2; return 1 ;;
-        504) die "$1 did not answer in time (call $(json_str "$RESP" 'd.get("call_id")'))" ;;
+          printf 'openchatter: %s answered with an error: %s\n' "$1" "$(json_opt "$RESP" error)" >&2; return 1 ;;
+        504) die "$1 did not answer in time (call $(json_opt "$RESP" call_id))" ;;
         *) fail_status "call" ;;
       esac
       ;;
@@ -1073,7 +1185,7 @@ f = sys.stdin if sys.argv[1] == "-" else open(sys.argv[1])
 print(json.dumps({"result": json.load(f)}))' "$BODY_FILE") || die "$BODY_FILE is not valid JSON"
       fi
       api POST "/api/v1/capabilities/calls/$1/result" "$body"
-      printf 'answered call %s (%s)\n' "$1" "$(json_str "$RESP" 'd.get("state")')"
+      printf 'answered call %s (%s)\n' "$1" "$(json_opt "$RESP" state)"
       ;;
     unregister)
       [ $# -ge 1 ] || die "usage: cli.sh capabilities unregister <name>"
