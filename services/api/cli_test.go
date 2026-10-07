@@ -1176,3 +1176,164 @@ func TestCLIPrintsHonestTimes(t *testing.T) {
 		}
 	}
 }
+
+// flakyFront proxies to upstream but spoils the first `spoil` requests of one
+// method: "drop" closes the socket with no answer, "502" is a bad gateway.
+// It returns how many requests of that method it saw.
+func flakyFront(t *testing.T, upstream, method, how string, spoil int) (*httptest.Server, func() int) {
+	t.Helper()
+	target, _ := url.Parse(upstream)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var mu sync.Mutex
+	seen := 0
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		mu.Lock()
+		seen++
+		n := seen
+		mu.Unlock()
+		if n > spoil {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		if how == "502" {
+			badGateway(w, r)
+			return
+		}
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		conn.Close()
+	}))
+	t.Cleanup(front.Close)
+	return front, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return seen
+	}
+}
+
+func runCLI(t *testing.T, cli, env string, extraEnv []string, args ...string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", append([]string{cli, "--env", env}, args...)...)
+	cmd.Env = append(append(os.Environ(), "HOME="+t.TempDir()), extraEnv...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// One DNS blip or dropped socket used to end the call with "cannot reach".
+// A read is safe to send again, so the CLI retries it.
+func TestCLIRetriesAReadThroughABlip(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	for _, how := range []string{"drop", "502"} {
+		front, gets := flakyFront(t, srv.URL, "GET", how, 1)
+		env := writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+"\n")
+		out, err := runCLI(t, cli, env, nil, "whoami")
+		if err != nil || !strings.Contains(out, "alice ") {
+			t.Fatalf("%s: whoami should survive one spoiled GET: %v\n%s", how, err, out)
+		}
+		if !strings.Contains(out, "retry 1 of 2") || gets() != 2 {
+			t.Fatalf("%s: want one visible retry, saw %d GETs:\n%s", how, gets(), out)
+		}
+	}
+}
+
+// A POST may have landed before the answer was lost, so it is never resent:
+// a second try would post the message twice.
+func TestCLINeverResendsAPost(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	for _, how := range []string{"drop", "502"} {
+		front, posts := flakyFront(t, srv.URL, "POST", how, 1)
+		env := writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+"\n")
+		out, err := runCLI(t, cli, env, nil, "send", "general", "one copy only", "--new-topic")
+		if err == nil {
+			t.Fatalf("%s: a spoiled POST must fail:\n%s", how, out)
+		}
+		if posts() != 1 || strings.Contains(out, "retry") {
+			t.Fatalf("%s: the POST went out %d times:\n%s", how, posts(), out)
+		}
+	}
+}
+
+// The failure names its cause and the retries are visible.
+func TestCLISaysWhyItCannotReach(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	env := writeEnv(t, "SERVER="+closed.URL+"\nTOKEN="+alice.token+"\n")
+	out, err := runCLI(t, cli, env, []string{"OPENCHATTER_RETRIES=1"}, "whoami")
+	if err == nil || !strings.Contains(out, "the connection failed, retry 1 of 1") ||
+		!strings.Contains(out, "cannot reach "+closed.URL+": the connection failed") {
+		t.Fatalf("a refused connection should retry once, then name the cause: %v\n%s", err, out)
+	}
+	if strings.Contains(out, alice.token) {
+		t.Fatal("the error printed the token")
+	}
+}
+
+// A stalled socket used to hang the CLI forever.
+func TestCLIGivesUpOnAStalledAnswer(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	stall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(15 * time.Second):
+		}
+	}))
+	t.Cleanup(stall.Close)
+	env := writeEnv(t, "SERVER="+stall.URL+"\nTOKEN="+alice.token+"\n")
+	start := time.Now()
+	out, err := runCLI(t, cli, env, []string{"OPENCHATTER_MAX_TIME=1", "OPENCHATTER_RETRIES=0"}, "whoami")
+	if err == nil || !strings.Contains(out, "no answer in time") {
+		t.Fatalf("a stalled answer should time out: %v\n%s", err, out)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("gave up after %s, want about 1s", took)
+	}
+}
+
+// A long poll holds the request open on purpose, so --wait adds to the limit.
+func TestCLILongPollGetsItsWait(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	env := writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n")
+	out, err := runCLI(t, cli, env, []string{"OPENCHATTER_MAX_TIME=1", "OPENCHATTER_RETRIES=0"}, "mentions", "--wait", "3")
+	if err != nil {
+		t.Fatalf("a 3s long poll under a 1s limit should still finish: %v\n%s", err, out)
+	}
+}
+
+// A 403 means the token works but the action is not allowed. The read path
+// used to blame the token; it now prints the server's own reason.
+func TestCLIShowsTheReasonForA403(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	alice.must("POST", "/api/v1/channels", map[string]any{"name": "secret", "topic": "hush"}, 201)
+	root := alice.must("POST", "/api/v1/channels/secret/messages", map[string]any{"body": "classified"}, 201)
+	cli := servedCLI(t, srv.URL)
+	env := writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+bob.token+"\n")
+	for _, verb := range []string{"msg", "thread"} {
+		out, err := runCLI(t, cli, env, nil, verb, root["id"].(string))
+		if err == nil || !strings.Contains(out, "you are not a member of this channel") ||
+			strings.Contains(out, "rejected the token") {
+			t.Fatalf("%s on a members-only message should name the reason: %v\n%s", verb, err, out)
+		}
+	}
+}

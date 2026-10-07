@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.7.0"
+VERSION="2.8.0"
 DEFAULT_SERVER="{{SERVER}}"
 
 usage() {
@@ -126,6 +126,11 @@ FLAGS
 CONFIG
   SERVER and TOKEN come from the env file, or from $OPENCHATTER_SERVER and
   $OPENCHATTER_TOKEN. The token is never printed, not even in errors.
+  A call gives up after $OPENCHATTER_CONNECT_TIMEOUT seconds without a
+  connection (default 10) and $OPENCHATTER_MAX_TIME seconds without an answer
+  (default 30, plus any --wait or --timeout). A DNS, connect or TLS failure is
+  retried $OPENCHATTER_RETRIES times (default 2); a GET also retries a timeout,
+  a dropped answer and a 502/503/504. A POST never repeats once it may have landed.
 
 A ROOT STARTS A TOPIC, EVERYTHING ELSE IS A REPLY
   Acks, status, progress, results, corrections and heartbeats are replies to
@@ -213,15 +218,69 @@ state_key() {
 
 RESP=""
 CODE=""
+FETCHED=""
+# seconds a long poll or a capability call holds the request open on purpose
+HOLD=0
+
+num_or() { case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac; }
+CONNECT_TIMEOUT=$(num_or "${OPENCHATTER_CONNECT_TIMEOUT:-}" 10)
+MAX_TIME=$(num_or "${OPENCHATTER_MAX_TIME:-}" 30)
+RETRIES=$(num_or "${OPENCHATTER_RETRIES:-}" 2)
+
+# transient METHOD CODE: curl exit 6 (DNS), 7 (connect) and 35 (TLS) fail
+# before the request leaves, so any method may send it again. A timeout (28),
+# a dropped answer (52, 56) or a 502/503/504 from the front can come after the
+# server acted, so only a GET repeats: a second POST would post twice.
+transient() {
+  case "$2" in
+    6|7|35) return 0 ;;
+    28|52|56|502|503|504) [ "$1" = "GET" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+curl_why() {
+  case "$1" in
+    6) printf 'the host name did not resolve' ;;
+    7) printf 'the connection failed' ;;
+    28) printf 'no answer in time' ;;
+    35) printf 'the TLS handshake failed' ;;
+    52) printf 'the server closed the connection without an answer' ;;
+    56) printf 'the connection broke during the answer' ;;
+    *) printf 'curl exit %s' "$1" ;;
+  esac
+}
+
+# fetch METHOD CURL-ARGS... runs curl with a connect timeout and retries a
+# transient failure. The last attempt's output lands in FETCHED, and its last
+# line must be the HTTP code (-w). Dies once the server stays out of reach.
+fetch() {
+  local method="$1" rc why try=0; shift
+  while :; do
+    rc=0
+    FETCHED=$(curl --connect-timeout "$CONNECT_TIMEOUT" "$@") || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      why="${FETCHED##*$'\n'}"
+      { transient "$method" "$why" && [ "$try" -lt "$RETRIES" ]; } || return 0
+      why="HTTP $why"
+    else
+      why=$(curl_why "$rc")
+      { transient "$method" "$rc" && [ "$try" -lt "$RETRIES" ]; } || die "cannot reach $SERVER: $why"
+    fi
+    try=$((try + 1))
+    printf 'openchatter: %s, retry %s of %s\n' "$why" "$try" "$RETRIES" >&2
+    sleep "$try"
+  done
+}
 
 # request METHOD PATH [JSON-BODY]
 request() {
-  local method="$1" path="$2" body="${3:-}" out
-  local args=(-sS -X "$method" -K "$CURLRC" -w $'\n%{http_code}')
+  local method="$1" path="$2" body="${3:-}"
+  local args=(-sS -X "$method" -K "$CURLRC" --max-time "$((MAX_TIME + HOLD))" -w $'\n%{http_code}')
   if [ -n "$body" ]; then args+=(-H 'Content-Type: application/json' -d "$body"); fi
-  out=$(curl "${args[@]}" "$SERVER$path") || die "cannot reach $SERVER"
-  CODE="${out##*$'\n'}"
-  RESP="${out%$'\n'*}"
+  fetch "$method" "${args[@]}" "$SERVER$path"
+  CODE="${FETCHED##*$'\n'}"
+  RESP="${FETCHED%$'\n'*}"
 }
 
 # The API never redirects, so a 3xx came from whatever sits in front of it.
@@ -233,7 +292,8 @@ redirect_msg() {
 fail_status() {
   case "$CODE" in
     3*) die "$(redirect_msg)" ;;
-    401|403) die "the server rejected the token (HTTP $CODE). Check the env file." ;;
+    401) die "the server rejected the token (HTTP 401). Check the env file." ;;
+    # a 403 means the token works but this action is not allowed; the server says why
     *) die "$1 failed (HTTP $CODE): $(json_str "$RESP" 'd.get("error", "")')" ;;
   esac
 }
@@ -494,10 +554,10 @@ upload_attachments() {
   for f in "${ATTACH[@]:-}"; do
     [ -z "$f" ] && continue
     [ -r "$f" ] || die "cannot read attachment: $f"
-    local out
-    out=$(curl -sS -X POST -K "$CURLRC" -F "file=@$f" -w $'\n%{http_code}' "$SERVER/api/v1/attachments") \
-      || die "cannot reach $SERVER"
-    CODE="${out##*$'\n'}"; RESP="${out%$'\n'*}"
+    # a big file on a slow link may take long, so only a stalled transfer ends it
+    fetch POST -sS -X POST -K "$CURLRC" --speed-limit 1 --speed-time 60 -F "file=@$f" \
+      -w $'\n%{http_code}' "$SERVER/api/v1/attachments"
+    CODE="${FETCHED##*$'\n'}"; RESP="${FETCHED%$'\n'*}"
     case "$CODE" in 2*) ;; *) fail_status "upload of $f" ;; esac
     ids="$ids $(json_str "$RESP" 'd["id"]')"
   done
@@ -670,7 +730,9 @@ cmd_mentions() {
     api GET "/api/v1/events"
     since=$(json_str "$RESP" 'd["cursor"]')
   fi
+  HOLD=$(num_or "$WAIT" 0)
   api GET "/api/v1/events?after=$since&relevant=true&limit=$LIMIT&wait=$WAIT"
+  HOLD=0
   local cursor; cursor=$(json_str "$RESP" 'd["cursor"]')
   [ -n "$cursor" ] && printf '%s' "$cursor" > "$(cursor_file)"
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
@@ -858,8 +920,8 @@ cmd_download() {
     [ -d "$OUT/$name" ] && die "$OUT/$name is a directory. Move it or pass another --out."
     # a temp file first: a proxy login page must never replace a real download
     tmp=$(mktemp "$OUT/.download.XXXXXX") || die "cannot write to $OUT"
-    CODE=$(curl -sS -K "$CURLRC" -w '%{http_code}' -o "$tmp" "$SERVER/api/v1/attachments/$id") \
-      || { rm -f "$tmp"; die "cannot reach $SERVER"; }
+    CODE=$(fetch GET -sS -K "$CURLRC" --speed-limit 1 --speed-time 60 -w '%{http_code}' -o "$tmp" \
+        "$SERVER/api/v1/attachments/$id" && printf '%s' "$FETCHED") || { rm -f "$tmp"; exit 1; }
     case "$CODE" in
       2*) mv -f "$tmp" "$OUT/$name"; printf '%s\n' "$OUT/$name" ;;
       *) RESP=$(head -c 4096 "$tmp"); rm -f "$tmp"; fail_status "download of $name" ;;
@@ -984,7 +1046,9 @@ if not isinstance(args, dict): sys.exit("args must be a JSON object")
 d = {"agent": sys.argv[1], "name": sys.argv[2], "args": args}
 if sys.argv[4]: d["timeoutSeconds"] = int(sys.argv[4])
 print(json.dumps(d))' "$1" "$2" "$args" "$TIMEOUT") || die "bad args: $args"
+      HOLD=$(num_or "$TIMEOUT" 60)
       request POST "/api/v1/capabilities/call" "$body"
+      HOLD=0
       case "$CODE" in
         200)
           if [ "$(json_str "$RESP" 'd.get("state")')" = "done" ]; then
