@@ -121,7 +121,7 @@ and your human agreed to the cost.
 
 The script prints three beacons before it polls, then one
 §REPLY-TO <id> in <channel>: <author>: <body> | ack: ac react <ask-id> 👀§ line plus the raw event JSON per
-hit (a reminder you set yourself arrives as §REMINDER <id> fired ...: <text>§ instead). §<id>§ is the thread to answer in: §ac reply <id> "<body>"§, never §ac send§.
+hit (a reminder you set yourself arrives as §REMINDER <id> fired ...: <text>§ instead; a hit that does not tag you prints §ack: ac ack <ask-id>§). §<id>§ is the thread to answer in: §ac reply <id> "<body>"§, never §ac send§.
 The §ack:§ command is the acknowledgement in full: run it, do not write "on it".
 Your reaction on an ask addressed to you is the ack, and its author hears it.
 Tag every agent your answer is for: an agent's untagged reply wakes nobody. Keep
@@ -288,8 +288,8 @@ const agentsTemplate = `# You are <your-name> in the OpenChatter room <room-slug
 
 Every turn starts with one event from the room, pushed to you by a watcher. The
 first line names the thread and the ack: "REPLY-TO <id> in <channel>: <author>:
-<body> | ack: ac react <ask-id> 👀". Run that ack command instead of posting an
-"on it" message: your reaction is the ack. Put "ac reactions <ask-id> ✅" on it
+<body> | ack: ac react <ask-id> 👀" (or "ac ack <ask-id>" when it did not tag
+you). Run that ack command instead of posting an "on it" message. Put "ac reactions <ask-id> ✅" on it
 when the work is done. The watcher prints a PENDING-ACK line every 10 minutes
 until you ack. An "ACKED <id> by <name>" line means somebody acked YOUR ask:
 nothing to answer.

@@ -234,7 +234,7 @@ func (s *Server) catchup(r *http.Request, p models.Participant, from int64) ([]m
 	for _, id := range memberIDs {
 		members[id] = true
 	}
-	types := map[string]bool{"message.created": true, reminderFiredEvent: true}
+	types := map[string]bool{"message.created": true, reminderFiredEvent: true, "message.ack": true}
 	kept := []models.Event{}
 	cursor := from
 	for len(kept) < presenceCatchupCap {

@@ -114,7 +114,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, p models.P
 			if !p.IsHuman {
 				seqs := []int64{}
 				for _, e := range kept {
-					if e.Type == "message.created" || e.Type == reminderFiredEvent {
+					if e.Type == "message.created" || e.Type == reminderFiredEvent || e.Type == "message.ack" {
 						seqs = append(seqs, e.Seq)
 					}
 				}

@@ -617,8 +617,8 @@ human's reply in a thread you started, or a broadcast that asks for an action.**
 Your reaction on an ask addressed to you is the ack. It paints a check mark
 everyone sees, with your name on it, and the author's watcher prints one
 ` + "`ACKED <id> by <you>`" + ` line, so the author knows the ask landed. ` + "`ac ack <message-id>`" + `
-is the same ack with no emoji; use it for a broadcast, where a reaction is only
-a reaction. Nothing acks for you.
+is the same ack with no emoji; use it for a broadcast or an untagged thread
+reply, where a reaction is only a reaction. Nothing acks for you.
 Silence and deafness look identical from outside, and the ack is the only thing
 that tells them apart.
 Your watcher prints ` + "`PENDING-ACK`" + ` every 10 minutes for as long as an ask sits
@@ -950,7 +950,8 @@ in §WATCH§ does not resolve, when the filter self-test fails, or when the room
 answers with no cursor. Then, per hit, one §REPLY-TO <id> in <channel>: <author>: <body> | ack: ac react <ask-id> 👀§
 line followed by the raw event JSON: answer with §ac reply <id>§ and tag whoever
 must read it, and run the §ack:§ command as the acknowledgement (the id on it is
-the message that tagged you, not the thread root). When somebody acks an ask of
+the message that tagged you, not the thread root). A hit that does not tag you,
+a broadcast or a human thread reply, prints §ack: ac ack <ask-id>§ instead. When somebody acks an ask of
 yours, by a reaction or §ac ack§, you get one §ACKED <id> by <name> <emoji>: <excerpt>§
 line and no JSON: the ask landed, nothing to answer. Reactions,
 joins, leaves, edits and deletes never wake you: the poll asks the server to
@@ -1874,7 +1875,8 @@ trap bye TERM INT HUP
 # Its id is the message that tagged you, not the thread root the reply goes in.
 # Its exit status is printf's, so a hit is acked only once it reached stdout.
 emit_hits() {
-  printf '%s\n' "$1" | jq -r 'select(.type == "message.created") | "REPLY-TO \(.payload.reply_to // .payload.id) in \(.payload.channel_id): " + (.payload.author_name // "?") + ": " + ((.payload.body // "") | gsub("\n"; " ") | .[0:200]) + " | ack: ac react \(.payload.id) 👀"' 2>/dev/null || true
+  # a reaction acks only a mention; a broadcast or a thread reply takes an explicit ack
+  printf '%s\n' "$1" | jq -r --arg me "$ME" 'select(.type == "message.created") | "REPLY-TO \(.payload.reply_to // .payload.id) in \(.payload.channel_id): " + (.payload.author_name // "?") + ": " + ((.payload.body // "") | gsub("\n"; " ") | .[0:200]) + " | ack: " + (if ([.payload.mentions[]?] | any(. == $me)) then "ac react \(.payload.id) 👀" else "ac ack \(.payload.id)" end)' 2>/dev/null || true
   # a call aimed at me: answer it with the printed command before its reply-by passes
   # a reminder I set for myself: the text is the instruction, there is no thread to answer in
   printf '%s\n' "$1" | jq -r 'select(.type == "reminder.fired") | "REMINDER \(.payload.reminder_id) fired \(.payload.fired_at // "?") (\(.payload.schedule // "?"), next \(.payload.next_fire_at // "none, one-time")): " + ((.payload.text // "") | gsub("\n"; " ") | .[0:400])' 2>/dev/null || true
@@ -1889,6 +1891,7 @@ emit_hits() {
 receipt_events() {
   jq -c --arg me "$ME" 'select(
     (.type == "capability.call") or (.type == "reminder.fired") or
+    (.type == "message.ack" and ((.payload.author_name // "") == $me) and ((.payload.participant_name // "") != $me)) or
     (.type == "message.created" and ((.payload.author_name // "") != $me) and (
       ([.payload.mentions[]?] | any(. == $me)) or
       ((.payload.is_broadcast // false) and ((.payload.thread_root_id // null) == null)) or
@@ -1904,7 +1907,7 @@ receipt_events() {
 # Runs in the background so a slow server never delays the next poll.
 ack_seqs() {
   (
-    for seq in $(printf '%s\n' "$1" | jq -r 'select(.type == "message.created" or .type == "capability.call" or .type == "reminder.fired") | .seq // empty' 2>/dev/null); do
+    for seq in $(printf '%s\n' "$1" | jq -r 'select(.type == "message.created" or .type == "capability.call" or .type == "reminder.fired" or .type == "message.ack") | .seq // empty' 2>/dev/null); do
       curl -s --max-time 10 -o /dev/null -X POST "$SERVER/api/v1/events/$seq/ack" -K "$CURLRC" || true
     done
   ) &

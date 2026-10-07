@@ -29,10 +29,8 @@ func (s *Store) SetAck(ctx context.Context, roomID, messageID, participantID str
 	return ev, tx.Commit(ctx)
 }
 
-// ackByReactionTx makes a reaction the ack when the message is an ask addressed
-// to the reactor, by the PendingAcks rule: a direct mention, or a human reply
-// under a thread root the reactor wrote. Other reactions are only reactions.
-// The caller holds the room advisory lock.
+// ackByReactionTx matches PendingAcks, so an unrelated reaction cannot ack an ask.
+// The caller must hold the room advisory lock.
 func ackByReactionTx(ctx context.Context, tx pgx.Tx, roomID, messageID, participantID, emoji string) error {
 	var ask bool
 	err := tx.QueryRow(ctx,
@@ -107,8 +105,19 @@ func ackTx(ctx context.Context, tx pgx.Tx, roomID, messageID, participantID, emo
 		if err != nil {
 			return AckEvent{}, err
 		}
-		if err := appendEventTx(ctx, tx, roomID, "message.ack", payload); err != nil {
+		seq, err := appendEventSeqTx(ctx, tx, roomID, "message.ack", payload)
+		if err != nil {
 			return AckEvent{}, err
+		}
+		// a receipt keeps the ack in the asking agent's inbox while its watcher is down
+		if ev.AuthorID != participantID {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO deliveries (room_id, event_seq, recipient_id, state)
+				 SELECT $1, $2, pa.id, CASE WHEN pa.presence_online THEN 'accepted' ELSE 'deferred' END
+				   FROM participants pa WHERE pa.id = $3 AND NOT pa.is_human AND NOT pa.revoked
+				 ON CONFLICT DO NOTHING`, roomID, seq, ev.AuthorID); err != nil {
+				return AckEvent{}, err
+			}
 		}
 	}
 	return ev, nil

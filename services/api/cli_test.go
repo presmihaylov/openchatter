@@ -293,11 +293,17 @@ func runWatcher(t *testing.T, script, home string, bob *testClient) string {
 // up, and returns everything it printed.
 func runWatcherPosting(t *testing.T, script, home string, post func()) string {
 	t.Helper()
+	os.Remove(filepath.Join(home, ".openchatter", "room.alice.cursor"))
+	return runWatcherResuming(t, script, home, post)
+}
+
+// runWatcherResuming is runWatcherPosting from the cursor a previous run left.
+func runWatcherResuming(t *testing.T, script, home string, post func()) string {
+	t.Helper()
 	path := filepath.Join(home, "watch.sh")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(filepath.Join(home, ".openchatter", "room.alice.cursor"))
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", path)
