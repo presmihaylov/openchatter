@@ -20,8 +20,8 @@ const (
 // handleEvents returns events after a cursor, long-polling up to wait seconds.
 // With no "after" param it returns the current cursor so clients can start tailing.
 // Filters: types=a,b limits event types; relevant=true keeps only message
-// events that are root broadcasts, mention the caller, or are replies in a
-// thread the caller participates in. The cursor always advances past filtered-out events.
+// events that are root broadcasts, mention the caller, or are human replies in
+// a thread the caller participates in. The cursor always advances past filtered-out events.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, p models.Participant) {
 	q := r.URL.Query()
 
@@ -281,7 +281,9 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 			kept = append(kept, e)
 			continue
 		}
-		if m.ThreadRootID != nil {
+		// an agent's untagged reply wakes nobody: agents tag whoever they need.
+		// An unknown kind still wakes, so a payload drift never goes deaf.
+		if m.ThreadRootID != nil && m.AuthorKind != "agent" {
 			if _, seen := pending[*m.ThreadRootID]; !seen {
 				rootIDs = append(rootIDs, *m.ThreadRootID)
 			}

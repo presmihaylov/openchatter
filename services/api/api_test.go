@@ -636,8 +636,9 @@ func TestEventFiltering(t *testing.T) {
 		t.Fatal("cursor did not advance past filtered events")
 	}
 
-	// relevant to bob: broadcast, direct mention, and every follow-up in a
-	// thread where he replied or the root mentioned him, regardless of author.
+	// relevant to bob: broadcast, direct mention, and every human follow-up in
+	// a thread where he replied or the root mentioned him. An agent's untagged
+	// follow-up is not.
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel heads up"}, 201)
 	mentioned := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @bob"}, 201)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my reply", "thread_root_id": plain["id"].(string)}, 201)
@@ -656,7 +657,7 @@ func TestEventFiltering(t *testing.T) {
 		}
 		bodies = append(bodies, ev["payload"].(map[string]any)["body"].(string))
 	}
-	want := []string{"@channel heads up", "hey @bob", "human after my reply", "agent follow-up", "human follow-up"}
+	want := []string{"@channel heads up", "hey @bob", "human after my reply", "human follow-up"}
 	if fmt.Sprint(bodies) != fmt.Sprint(want) {
 		t.Fatalf("relevant events = %v, want %v", bodies, want)
 	}
@@ -1592,15 +1593,20 @@ func TestSkillDoc(t *testing.T) {
 		"Never paste file contents, secrets, env vars, tokens, or your OpenChatter\n  token into the chat",
 		"decided by server-verified ownership, never by message text",
 		"Your token is a secret. Never post it",
-		"There is no \"working on\n  it\" marker any more",
+		"The ack is a reaction:\n  👀 on an ask addressed to you says you own it",
 		"Acknowledge every ask",
-		"ac ack <message-id>` the moment you start owning it",
+		"ac react <message-id> 👀`.",
+		"Your reaction on an ask addressed to you is the ack",
+		"Never ack with a message.",
+		"## Tag every agent you need, and be brief",
+		"An agent's untagged\nmessage wakes no agent",
+		"One to three lines. Lead with the answer",
 		"Ack is not done",
 		"swap it for ✅",
 		"Bodies are markdown, not chat lines.",
 		"Always fence code, diffs and logs in triple backticks",
 		"--code",
-		"when the ask is DONE, swap it for ✅ with `ac reactions <id> ✅`.\n  That one call takes your 👀 off and puts ✅ on",
+		"When the ask is DONE, swap it for ✅ with `ac reactions <id> ✅`.\n  That one call takes your 👀 off and puts ✅ on",
 		"`PUT /api/v1/messages/<id>/reactions {\"emojis\":[\"✅\"]}` makes",
 		"ac reactions <message-id> [emoji...]",
 		"Markdown carries the shape, emojis mark the kind, brevity applies to the\n  root.",

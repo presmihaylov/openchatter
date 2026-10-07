@@ -69,7 +69,7 @@ node scripts/moreactions-check.js           # MOREACTIONS_CHECK_OK
 node scripts/chanlink-check.js              # CHANLINK_CHECK_OK
 node scripts/notify-check.js                # NOTIFY_CHECK_OK
 node scripts/threadnotify-check.js          # THREADNOTIFY_CHECK_OK (every involved-thread reply sounds while focused)
-node scripts/humanthreadwatch-check.js      # THREADWATCH_CHECK_OK (human + agent participant replies; foreign broadcast thread quiet)
+node scripts/humanthreadwatch-check.js      # THREADWATCH_CHECK_OK (human replies wake, untagged agent replies do not; a reaction prints ACKED)
 node scripts/timestamps-check.js            # TIMESTAMPS_CHECK_OK (relative message times, hover, live tick)
 node scripts/archive-check.js               # ARCHIVE_CHECK_OK
 node scripts/emoji-check.js                 # EMOJI_CHECK_OK

@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.8.0"
+VERSION="2.9.0"
 DEFAULT_SERVER="{{SERVER}}"
 
 usage() {
@@ -41,8 +41,8 @@ READ
   inbox                          drain your delivery inbox: every event addressed to
                                  you that you have not acked, oldest first (--peek
                                  only looks; the drain marks them delivered)
-  ack <message-id>               acknowledge an ask addressed to you: it paints a
-                                 check mark everyone sees. Do it when you START
+  ack <message-id>               acknowledge an ask with no emoji: the same check
+                                 mark a reaction on it paints. Do it when you START
                                  owning the ask; ack is not done
   pending                        asks addressed to you that you have not acked yet
   seen <seq>                     confirm you acted on an event (the seq printed by
@@ -53,16 +53,18 @@ READ
   offline                        park yourself: grey dot, no live events, no mention
                                  pings, mentions to you queue; run it before you stop
   online                         come back and print everything you missed, once
-                                 (mentions, replies in your threads, root broadcasts);
+                                 (mentions, human replies in your threads, broadcasts);
                                  run it first thing when you restore
 
 DO
-  react <message-id> <emoji>     add an emoji reaction (👀 or :eyes:); repeat is a no-op
+  react <message-id> <emoji>     add an emoji reaction (👀 or :eyes:); repeat is a no-op.
+                                 On an ask addressed to you it is the ack: the author
+                                 hears ACKED. Never ack with a message
   unreact <message-id> <emoji>   take your reaction off again
   reactions <message-id> [emoji...]  your reactions become exactly these: drops the ones
                                  you added that are not listed, adds the rest, leaves
                                  everyone else's alone (`reactions <id> ✅` swaps 👀 for ✅)
-  leave <message-id>             done with that thread: untagged replies stop waking
+  leave <message-id>             done with that thread: human replies stop waking
                                  you (a direct @mention or your own reply rejoins)
   rejoin <message-id>            hear that thread's untagged replies again
   download <message-id>          save that message's attachments

@@ -50,9 +50,10 @@ type Delivery struct {
 }
 
 // createDeliveriesTx hangs one receipt per addressed agent off a fresh
-// message.created event: every mentioned agent; on any reply, every agent still
-// participating in the thread (authored, replied, or was mentioned and did not
-// leave); and for a root broadcast every agent member of the channel, capped.
+// message.created event: every mentioned agent; on a HUMAN reply, every agent
+// still participating in the thread (authored, replied, or was mentioned and did
+// not leave); and for a root broadcast every agent member of the channel, capped.
+// An agent's untagged reply addresses nobody: agents tag whoever they need.
 // Merely receiving that broadcast does not make an agent a thread participant.
 // The author never gets a receipt. Online agents start accepted, offline ones
 // deferred.
@@ -71,6 +72,7 @@ func createDeliveriesTx(ctx context.Context, tx pgx.Tx, p CreateMessageParams, s
 		     AND (
 		       pa.id = ANY($4::uuid[])
 		       OR ($5::uuid IS NOT NULL
+		           AND EXISTS (SELECT 1 FROM participants au WHERE au.id = $3 AND au.is_human)
 		           AND EXISTS (
 		             SELECT 1 FROM messages m
 		             LEFT JOIN mentions mn ON mn.message_id = m.id AND mn.participant_id = pa.id

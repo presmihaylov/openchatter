@@ -3,6 +3,8 @@ package models
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // SetAck records that participantID has taken message on, and emits one
@@ -20,12 +22,45 @@ func (s *Store) SetAck(ctx context.Context, roomID, messageID, participantID str
 	if err := lockRoomEvents(ctx, tx, roomID); err != nil {
 		return AckEvent{}, err
 	}
-	ev := AckEvent{MessageID: messageID, ParticipantID: participantID}
-	err = tx.QueryRow(ctx,
-		`SELECT m.channel_id, m.thread_root_id, m.author_id, a.name
+	ev, err := ackTx(ctx, tx, roomID, messageID, participantID, "")
+	if err != nil {
+		return AckEvent{}, err
+	}
+	return ev, tx.Commit(ctx)
+}
+
+// ackByReactionTx makes a reaction the ack when the message is an ask addressed
+// to the reactor, by the PendingAcks rule: a direct mention, or a human reply
+// under a thread root the reactor wrote. Other reactions are only reactions.
+// The caller holds the room advisory lock.
+func ackByReactionTx(ctx context.Context, tx pgx.Tx, roomID, messageID, participantID, emoji string) error {
+	var ask bool
+	err := tx.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM messages m
+		   JOIN participants a ON a.id = m.author_id
+		   LEFT JOIN messages root ON root.id = m.thread_root_id
+		  WHERE m.id = $1 AND m.room_id = $2 AND m.kind = 'message' AND m.author_id <> $3
+		    AND (EXISTS (SELECT 1 FROM mentions mn WHERE mn.message_id = m.id AND mn.participant_id = $3)
+		         OR (a.is_human AND root.author_id = $3)))`,
+		messageID, roomID, participantID).Scan(&ask)
+	if err != nil || !ask {
+		return err
+	}
+	_, err = ackTx(ctx, tx, roomID, messageID, participantID, emoji)
+	return err
+}
+
+// ackTx records the ack and, when it is new, appends the message.ack event.
+// emoji is the reaction that acked it, empty for an explicit ack. The caller
+// holds the room advisory lock.
+func ackTx(ctx context.Context, tx pgx.Tx, roomID, messageID, participantID, emoji string) (AckEvent, error) {
+	ev := AckEvent{MessageID: messageID, ParticipantID: participantID, Emoji: emoji}
+	err := tx.QueryRow(ctx,
+		`SELECT m.channel_id, m.thread_root_id, m.author_id, a.name, left(m.body, 120)
 		   FROM messages m JOIN participants a ON a.id = m.author_id
 		  WHERE m.id = $1 AND m.room_id = $2`,
-		messageID, roomID).Scan(&ev.ChannelID, &ev.ThreadRootID, &ev.AuthorID, &ev.AuthorName)
+		messageID, roomID).Scan(&ev.ChannelID, &ev.ThreadRootID, &ev.AuthorID, &ev.AuthorName, &ev.Excerpt)
 	if err != nil {
 		return AckEvent{}, mapRowErr(err)
 	}
@@ -76,7 +111,7 @@ func (s *Store) SetAck(ctx context.Context, roomID, messageID, participantID str
 			return AckEvent{}, err
 		}
 	}
-	return ev, tx.Commit(ctx)
+	return ev, nil
 }
 
 // PendingAcks lists the asks addressed to participantID that it has not acked,

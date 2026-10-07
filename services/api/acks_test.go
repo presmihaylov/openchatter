@@ -214,3 +214,98 @@ func TestAckEventReachesOnlyTheAsker(t *testing.T) {
 		t.Fatalf("a repeat ack re-woke alice (%d events)", n)
 	}
 }
+
+// acksSince is every message.ack event a participant's relevant poll returns.
+func acksSince(t *testing.T, c *testClient, after string) []map[string]any {
+	t.Helper()
+	out := c.must("GET", "/api/v1/events?after="+after+"&relevant=true", nil, 200)
+	acks := []map[string]any{}
+	for _, e := range out["events"].([]any) {
+		ev := e.(map[string]any)
+		if ev["type"] == "message.ack" {
+			acks = append(acks, ev["payload"].(map[string]any))
+		}
+	}
+	return acks
+}
+
+// A reaction from the agent an ask is addressed to is the ack: it lands on the
+// pending list and tells the asker, with the emoji and an excerpt. A reaction
+// from anyone else, or on something that is not an ask, is only a reaction.
+func TestReactionAcksAnAsk(t *testing.T) {
+	srv, _ := newTestServer(t)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
+	cursor := func(c *testClient) string {
+		return fmt.Sprintf("%.0f", c.must("GET", "/api/v1/events", nil, 200)["cursor"].(float64))
+	}
+	react := func(c *testClient, id, emoji string) {
+		c.must("POST", "/api/v1/messages/"+id+"/reactions", map[string]any{"emoji": emoji}, 200)
+	}
+
+	ask := bob.must("POST", "/api/v1/channels/general/messages",
+		map[string]any{"body": "@alice please review the plan"}, 201)
+	askID := ask["id"].(string)
+	b0 := cursor(bob)
+
+	// not the addressee, or the author itself: no ack
+	react(human, askID, "🎉")
+	react(bob, askID, "👍")
+	if names := ackerNames(alice.must("GET", "/api/v1/messages/"+askID, nil, 200)); len(names) != 0 {
+		t.Fatalf("a reaction by a non-addressee acked the ask: %v", names)
+	}
+
+	react(alice, askID, "👀")
+	if got := pendingIDs(t, alice); len(got) != 0 {
+		t.Fatalf("the reaction did not clear the pending ask: %v", got)
+	}
+	if names := ackerNames(alice.must("GET", "/api/v1/messages/"+askID, nil, 200)); len(names) != 1 || names[0] != "alice" {
+		t.Fatalf("acked_by = %v, want [alice]", names)
+	}
+	acks := acksSince(t, bob, b0)
+	if len(acks) != 1 {
+		t.Fatalf("bob got %d ack events, want 1: %v", len(acks), acks)
+	}
+	for k, want := range map[string]string{
+		"message_id": askID, "participant_name": "alice", "author_name": "bob",
+		"emoji": "👀", "excerpt": "@alice please review the plan",
+	} {
+		if acks[0][k] != want {
+			t.Errorf("ack.%s = %v, want %q", k, acks[0][k], want)
+		}
+	}
+
+	// a second reaction on an acked ask is a reaction, not a second ack
+	b1 := cursor(bob)
+	react(alice, askID, "✅")
+	if n := len(acksSince(t, bob, b1)); n != 0 {
+		t.Fatalf("a second reaction re-acked the ask (%d events)", n)
+	}
+
+	// the "✅ replaces 👀" move acks a fresh ask too
+	second := bob.must("POST", "/api/v1/channels/general/messages",
+		map[string]any{"body": "@alice second ask"}, 201)
+	alice.must("PUT", "/api/v1/messages/"+second["id"].(string)+"/reactions", map[string]any{"emojis": []string{"✅"}}, 200)
+	if got := pendingIDs(t, alice); len(got) != 0 {
+		t.Fatalf("a replace did not ack the ask: %v", got)
+	}
+
+	// a human reply in your own thread is an ask; an agent's untagged one is not
+	root := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "alice's topic"}, 201)
+	humanReply := human.must("POST", "/api/v1/channels/general/messages",
+		map[string]any{"body": "human question", "thread_root_id": root["id"]}, 201)
+	agentReply := bob.must("POST", "/api/v1/channels/general/messages",
+		map[string]any{"body": "agent aside", "thread_root_id": root["id"]}, 201)
+	react(alice, humanReply["id"].(string), "👀")
+	react(alice, agentReply["id"].(string), "👀")
+	if names := ackerNames(alice.must("GET", "/api/v1/messages/"+humanReply["id"].(string), nil, 200)); len(names) != 1 {
+		t.Fatalf("a reaction on a human thread ask did not ack it: %v", names)
+	}
+	if names := ackerNames(alice.must("GET", "/api/v1/messages/"+agentReply["id"].(string), nil, 200)); len(names) != 0 {
+		t.Fatalf("a reaction on a non-ask acked it: %v", names)
+	}
+}

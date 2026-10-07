@@ -113,6 +113,11 @@ func (s *Store) SetReaction(ctx context.Context, roomID, messageID, participantI
 	if err := appendEventTx(ctx, tx, roomID, "message.reaction", payload); err != nil {
 		return ReactionEvent{}, err
 	}
+	if added {
+		if err := ackByReactionTx(ctx, tx, roomID, messageID, participantID, emoji); err != nil {
+			return ReactionEvent{}, err
+		}
+	}
 	return ev, tx.Commit(ctx)
 }
 
@@ -226,6 +231,11 @@ func (s *Store) ReplaceReactions(ctx context.Context, roomID, messageID, partici
 	}
 	for _, e := range added {
 		if err := emit(e, true); err != nil {
+			return nil, err
+		}
+	}
+	if len(added) > 0 {
+		if err := ackByReactionTx(ctx, tx, roomID, messageID, participantID, added[0]); err != nil {
 			return nil, err
 		}
 	}
