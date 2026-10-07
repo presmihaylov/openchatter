@@ -1297,14 +1297,21 @@ func TestCLIGivesUpOnAStalledAnswer(t *testing.T) {
 		}
 	}))
 	t.Cleanup(stall.Close)
-	env := writeEnv(t, "SERVER="+stall.URL+"\nTOKEN="+alice.token+"\n")
-	start := time.Now()
-	out, err := runCLI(t, cli, env, []string{"OPENCHATTER_MAX_TIME=1", "OPENCHATTER_RETRIES=0"}, "whoami")
-	if err == nil || !strings.Contains(out, "no answer in time") {
-		t.Fatalf("a stalled answer should time out: %v\n%s", err, out)
-	}
-	if took := time.Since(start); took > 5*time.Second {
-		t.Fatalf("gave up after %s, want about 1s", took)
+	limits := "OPENCHATTER_MAX_TIME=1\nOPENCHATTER_RETRIES=0\n"
+	// the limits work from the process environment and from the env file alike
+	for name, c := range map[string]struct{ file, extra string }{
+		"process env": {"", limits},
+		"env file":    {limits, ""},
+	} {
+		env := writeEnv(t, "SERVER="+stall.URL+"\nTOKEN="+alice.token+"\n"+c.file)
+		start := time.Now()
+		out, err := runCLI(t, cli, env, strings.Fields(c.extra), "whoami")
+		if err == nil || !strings.Contains(out, "no answer in time") {
+			t.Fatalf("%s: a stalled answer should time out: %v\n%s", name, err, out)
+		}
+		if took := time.Since(start); took > 5*time.Second {
+			t.Fatalf("%s: gave up after %s, want about 1s", name, took)
+		}
 	}
 }
 

@@ -131,6 +131,7 @@ CONFIG
   (default 30, plus any --wait or --timeout). A DNS, connect or TLS failure is
   retried $OPENCHATTER_RETRIES times (default 2); a GET also retries a timeout,
   a dropped answer and a 502/503/504. A POST never repeats once it may have landed.
+  These three may also be set in the env file.
 
 A ROOT STARTS A TOPIC, EVERYTHING ELSE IS A REPLY
   Acks, status, progress, results, corrections and heartbeats are replies to
@@ -192,6 +193,10 @@ load_config() {
   SERVER="${SERVER%/}"
   [ -n "$SERVER" ] || die "no server: set SERVER in the env file or pass --server"
   [ -n "$TOKEN" ] || die "no token: set TOKEN in the env file or \$OPENCHATTER_TOKEN"
+  # after the env file is sourced, so it can set these too
+  CONNECT_TIMEOUT=$(num_or "${OPENCHATTER_CONNECT_TIMEOUT:-}" 10)
+  MAX_TIME=$(num_or "${OPENCHATTER_MAX_TIME:-}" 30)
+  RETRIES=$(num_or "${OPENCHATTER_RETRIES:-}" 2)
   # Credentials go in a curl config file, never in argv: any process the same
   # user runs can read another's command line out of ps. CURLRC is spliced into
   # every curl and carries the bearer token.
@@ -223,14 +228,9 @@ FETCHED=""
 HOLD=0
 
 num_or() { case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac; }
-CONNECT_TIMEOUT=$(num_or "${OPENCHATTER_CONNECT_TIMEOUT:-}" 10)
-MAX_TIME=$(num_or "${OPENCHATTER_MAX_TIME:-}" 30)
-RETRIES=$(num_or "${OPENCHATTER_RETRIES:-}" 2)
 
-# transient METHOD CODE: curl exit 6 (DNS), 7 (connect) and 35 (TLS) fail
-# before the request leaves, so any method may send it again. A timeout (28),
-# a dropped answer (52, 56) or a 502/503/504 from the front can come after the
-# server acted, so only a GET repeats: a second POST would post twice.
+# Retry any method only when curl failed before sending the request.
+# Retry ambiguous failures only for GETs; repeating a POST can duplicate it.
 transient() {
   case "$2" in
     6|7|35) return 0 ;;
