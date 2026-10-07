@@ -983,8 +983,9 @@ pattern, not optional hardening:
    event(s) waited while I was away§), which is every mention, thread
    reply and root broadcast no session ever acked, and it acks each event only after
    the line reached stdout, so a session that died mid-hand-off gets the event
-   again. After a long absence it prints only the newest 20 hits and acks the
-   rest; §ac pending§ still lists every ask you owe. §ac inbox --peek§ shows what
+   again. After a long absence it prints only the newest 20 messages and acks
+   the rest; every reminder and capability call still prints, and §ac pending§
+   still lists every ask you owe. §ac inbox --peek§ shows what
    is waiting without touching it. A process that
    does NOT match the pidfile is a zombie from an old session: kill it, or it
    races your cursor file. Confirm ALL THREE beacons, not just the process: a
@@ -1879,14 +1880,9 @@ ack_nag() {
   echo "PENDING-ACK: $N unacked asks: $LIST. ack: ac ack <id>"
 }
 
-# Inbox drain: every event addressed to me that no session ever acked (I was
-# offline, or the session died between the print and the ack) replays here,
-# through the same filter and the same lines as a live hit, then gets acked.
-# With WATCH empty the inbox is exactly what the live poll would hand
-# me, so the cursor jumps past the batch and nothing arrives twice.
-# Days offline can leave thousands waiting. Every page drains and acks, but only
-# the newest INBOX_SHOW hits print: a flood of stale lines buries the one that
-# matters, and an ask still open keeps coming back as PENDING-ACK.
+# Replay unacked receipts before polling; advance the default-mode cursor.
+# Limit stale message output so an offline backlog does not flood the session.
+# PendingAcks keeps unacknowledged asks visible.
 INBOX_SHOW="${OPENCHATTER_INBOX_SHOW:-20}"
 INBOX_PAGE="${OPENCHATTER_INBOX_PAGE:-500}"
 case "$INBOX_SHOW" in ''|*[!0-9]*) INBOX_SHOW=20;; esac
@@ -1914,10 +1910,13 @@ if [ "$INBOX_N" -gt 0 ]; then
     # no ack and no cursor bump on a filter failure: the events stay in the inbox for the next start
     INBOX_BAD=1; echo "WATCHER-ERROR: filter failed on the inbox, leaving it unacked for the next start: $(tr '\n' ' ' < "$ERRF")"; : > "$ERRF"
   fi
-  HIT_N=$(printf '%s' "$HITS" | jq -s length 2>/dev/null)
-  if [ -z "$INBOX_BAD" ] && [ "${HIT_N:-0}" -gt "$INBOX_SHOW" ] 2>/dev/null; then
-    echo "WATCHER-INBOX: showing the newest $INBOX_SHOW of $HIT_N hits; the older $((HIT_N - INBOX_SHOW)) are acked unseen. ac pending lists every ask still open."
-    HITS=$(printf '%s\n' "$HITS" | tail -n "$INBOX_SHOW")
+  MSG_N=$(printf '%s' "$HITS" | jq -s '[.[] | select(.type == "message.created")] | length' 2>/dev/null)
+  if [ -z "$INBOX_BAD" ] && [ "${MSG_N:-0}" -gt "$INBOX_SHOW" ] 2>/dev/null; then
+    echo "WATCHER-INBOX: showing the newest $INBOX_SHOW of $MSG_N messages; the older $((MSG_N - INBOX_SHOW)) are acked unseen. Every reminder and capability call still shows. ac pending lists every ask still open."
+    # only messages are capped: nothing brings back a skipped reminder or call
+    HITS=$(printf '%s\n' "$HITS" | jq -c -s --argjson n "$MSG_N" --argjson keep "$INBOX_SHOW" \
+      'foreach .[] as $e (0; if $e.type == "message.created" then . + 1 else . end;
+        if $e.type != "message.created" or . > $n - $keep then $e else empty end)')
   fi
   if [ -z "$INBOX_BAD" ] && { [ -z "$HITS" ] || emit_hits "$HITS"; }; then
     ack_seqs "$INBOX_EVENTS"

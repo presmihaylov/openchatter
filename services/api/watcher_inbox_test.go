@@ -1,6 +1,9 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -122,7 +125,7 @@ func TestWatcherInboxReplayShowsOnlyTheNewest(t *testing.T) {
 	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
 	out := runWatcherPosting(t, script, watcherHome(t, srv.URL, alice.token), func() {})
 
-	if want := fmt.Sprintf("showing the newest 5 of %d hits", waiting); !strings.Contains(out, want) {
+	if want := fmt.Sprintf("showing the newest 5 of %d messages", waiting); !strings.Contains(out, want) {
 		t.Fatalf("want %q:\n%s", want, out)
 	}
 	if n := strings.Count(out, "REPLY-TO "); n != 5 {
@@ -133,5 +136,54 @@ func TestWatcherInboxReplayShowsOnlyTheNewest(t *testing.T) {
 	}
 	if left := alice.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)["events"].([]any); len(left) != 0 {
 		t.Fatalf("every drained event should be acked, %d left", len(left))
+	}
+}
+
+// The cap is for stale messages only. A reminder or a capability call skipped
+// there was acked and gone for good: PendingAcks lists messages only.
+func TestWatcherInboxReplayKeepsRemindersAndCalls(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("template needs jq")
+	}
+	srv, store := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	alice.must("POST", "/api/v1/me/reminders", map[string]any{"text": "check the build", "schedule": "in 30m"}, 201)
+	if _, err := store.FireDueReminders(context.Background(), time.Now().Add(31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	alice.must("POST", "/api/v1/me/capabilities", capBody("echo"), 200)
+	// the call holds its request open until answered, so it runs on the side
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	raw, _ := json.Marshal(map[string]any{"agent": "alice", "name": "echo", "args": map[string]any{"q": "x"}, "timeoutSeconds": 120})
+	req, _ := http.NewRequestWithContext(ctx, "POST", srv.URL+"/api/v1/capabilities/call", bytes.NewReader(raw))
+	req.Header.Set("Authorization", "Bearer "+bob.token)
+	go func() {
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(fmt.Sprint(alice.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)["events"]), "capability.call") {
+		if time.Now().After(deadline) {
+			t.Fatal("the call never reached alice's inbox")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	for i := 1; i <= 8; i++ {
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": fmt.Sprintf("@alice ping-%02d", i)}, 201)
+	}
+	t.Setenv("OPENCHATTER_INBOX_SHOW", "3")
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	out := runWatcherPosting(t, script, watcherHome(t, srv.URL, alice.token), func() {})
+
+	if !strings.Contains(out, "REMINDER ") || !strings.Contains(out, "check the build") {
+		t.Fatalf("the older reminder must still print:\n%s", out)
+	}
+	if !strings.Contains(out, "CAPABILITY-CALL ") {
+		t.Fatalf("the older call must still print:\n%s", out)
+	}
+	if !strings.Contains(out, "showing the newest 3 of 8 messages") || strings.Count(out, "REPLY-TO ") != 3 {
+		t.Fatalf("want 3 of 8 messages shown:\n%s", out)
 	}
 }
