@@ -347,8 +347,8 @@ func TestRemindersHardening(t *testing.T) {
 		t.Fatalf("a kicked agent's reminder fired %d times", count)
 	}
 
-	// one bad row does not stall the batch
-	if _, err := testDB(t).Exec(ctx, `UPDATE reminders SET schedule = 'garbage', next_fire_at = now() - interval '1 minute' WHERE id = $1`, fired["id"]); err != nil {
+	// one bad row does not stall the batch; only a recurring row parses its schedule
+	if _, err := testDB(t).Exec(ctx, `UPDATE reminders SET kind = 'every', schedule = 'garbage', next_fire_at = now() - interval '1 minute' WHERE id = $1`, fired["id"]); err != nil {
 		t.Fatal(err)
 	}
 	live := bob.must("POST", "/api/v1/me/reminders", map[string]any{"text": "after the bad one", "schedule": "in 1m"}, 201)

@@ -87,7 +87,7 @@ func TestWatcherNeverAcksItsOwnReply(t *testing.T) {
 		root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice a question"}, 201)
 		id := root["id"].(string)
 		alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my answer", "thread_root_id": id}, 201)
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "thanks", "thread_root_id": id}, 201)
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice thanks", "thread_root_id": id}, 201)
 		time.Sleep(time.Second)
 	})
 	if !strings.Contains(out, "a question") || !strings.Contains(out, "thanks") {
@@ -185,5 +185,121 @@ func TestWatcherInboxReplayKeepsRemindersAndCalls(t *testing.T) {
 	}
 	if !strings.Contains(out, "showing the newest 3 of 8 messages") || strings.Count(out, "REPLY-TO ") != 3 {
 		t.Fatalf("want 3 of 8 messages shown:\n%s", out)
+	}
+}
+
+// A reaction or an ack on alice's ask by its addressee prints one ACKED line, so
+// she knows the ask landed. Her own acks and acks on other people's asks stay
+// silent, and the ack event never reaches her session as raw JSON.
+func TestWatcherHearsAcksOnItsAsks(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("template needs jq")
+	}
+	srv, _ := newTestServer(t)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := &testClient{t: t, base: srv.URL}
+	joined := human.must("POST", "/api/v1/rooms/join", map[string]any{
+		"invite": secret, "name": "maya", "is_human": true,
+	}, 201)
+	human.token = joined["token"].(string)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	var byReaction, byAck string
+	out := runWatcherPosting(t, script, watcherHome(t, srv.URL, alice.token), func() {
+		byReaction = alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob please review the plan"}, 201)["id"].(string)
+		byAck = alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob a broadcast-style ask"}, 201)["id"].(string)
+		bob.must("POST", "/api/v1/messages/"+byReaction+"/reactions", map[string]any{"emoji": "👀"}, 200)
+		bob.must("POST", "/api/v1/messages/"+byAck+"/ack", nil, 200)
+		// somebody else's ask, acked by its addressee: not alice's news
+		foreign := human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob a human ask"}, 201)["id"].(string)
+		bob.must("POST", "/api/v1/messages/"+foreign+"/reactions", map[string]any{"emoji": "👀"}, 200)
+		// alice's own ack on an ask to her
+		mine := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice your turn"}, 201)["id"].(string)
+		alice.must("POST", "/api/v1/messages/"+mine+"/reactions", map[string]any{"emoji": "👀"}, 200)
+	})
+	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
+		t.Fatalf("watcher did not start clean:\n%s", out)
+	}
+	for _, want := range []string{
+		"ACKED " + byReaction + " by bob 👀: @bob please review the plan",
+		"ACKED " + byAck + " by bob: @bob a broadcast-style ask",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("want %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "ACKED "); n != 2 {
+		t.Fatalf("printed %d ACKED lines, want 2:\n%s", n, out)
+	}
+	if strings.Contains(out, `"type":"message.ack"`) || strings.Contains(out, `"type":"message.reaction"`) {
+		t.Fatalf("an ack or reaction reached the session as raw JSON:\n%s", out)
+	}
+}
+
+// An ack that lands while the asker's watcher is down used to sit behind the
+// cursor: the next start drained a later mention, jumped past it and never
+// printed ACKED. The ack now holds a receipt, so the inbox replays it once.
+func TestWatcherHearsAnAckMadeWhileItWasDown(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("template needs jq")
+	}
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	home := watcherHome(t, srv.URL, alice.token)
+	var ask string
+	runWatcherPosting(t, script, home, func() {
+		ask = alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob please review the plan"}, 201)["id"].(string)
+	})
+	bob.must("POST", "/api/v1/messages/"+ask+"/reactions", map[string]any{"emoji": "👀"}, 200)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice a later question"}, 201)
+
+	out := runWatcherResuming(t, script, home, func() {})
+	if want := "ACKED " + ask + " by bob 👀: @bob please review the plan"; !strings.Contains(out, want) {
+		t.Fatalf("want %q after the restart:\n%s", want, out)
+	}
+	if !strings.Contains(out, "a later question") {
+		t.Fatalf("the later mention should replay too:\n%s", out)
+	}
+	if again := runWatcherResuming(t, script, home, func() {}); strings.Contains(again, "ACKED ") {
+		t.Fatalf("the replayed ack was not acked, so it printed twice:\n%s", again)
+	}
+}
+
+// A root broadcast is not an ask a reaction can ack, so the hit must print the
+// explicit ack, and running that printed command must reach the asker.
+func TestWatcherBroadcastAckCommandAcks(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("template needs jq")
+	}
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	home := watcherHome(t, srv.URL, alice.token)
+	before := fmt.Sprint(bob.must("GET", "/api/v1/events", nil, 200)["cursor"])
+	var broadcast, mention string
+	out := runWatcherPosting(t, script, home, func() {
+		broadcast = bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel please check the deploy"}, 201)["id"].(string)
+		mention = bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice and you the logs"}, 201)["id"].(string)
+	})
+	if !strings.Contains(out, "| ack: ac react "+mention+" 👀") {
+		t.Fatalf("a mention should print the reaction ack:\n%s", out)
+	}
+	var cmd []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "REPLY-TO ") && strings.Contains(line, "please check the deploy") {
+			_, after, _ := strings.Cut(line, " | ack: ac ")
+			cmd = strings.Fields(after)
+		}
+	}
+	if len(cmd) != 2 || cmd[0] != "ack" || cmd[1] != broadcast {
+		t.Fatalf("a broadcast should print ac ack %s, got %q:\n%s", broadcast, cmd, out)
+	}
+	env := filepath.Join(home, ".openchatter", "room.alice.env")
+	if got, err := runCLI(t, servedCLI(t, srv.URL), env, nil, cmd...); err != nil {
+		t.Fatalf("the printed ack failed: %v\n%s", err, got)
+	}
+	acks := acksSince(t, bob, before)
+	if len(acks) != 1 || acks[0]["message_id"] != broadcast || acks[0]["participant_name"] != "alice" {
+		t.Fatalf("bob should hear one ack from alice on the broadcast, got %v", acks)
 	}
 }
