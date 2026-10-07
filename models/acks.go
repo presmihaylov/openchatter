@@ -100,27 +100,34 @@ func ackTx(ctx context.Context, tx pgx.Tx, roomID, messageID, participantID, emo
 
 	// a repeat ack still answers with the list, but writes no second event: the
 	// author would be woken again for a receipt that has not changed
-	if fresh {
-		payload, err := json.Marshal(ev)
-		if err != nil {
-			return AckEvent{}, err
-		}
-		seq, err := appendEventSeqTx(ctx, tx, roomID, "message.ack", payload)
-		if err != nil {
-			return AckEvent{}, err
-		}
-		// a receipt keeps the ack in the asking agent's inbox while its watcher is down
-		if ev.AuthorID != participantID {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO deliveries (room_id, event_seq, recipient_id, state)
-				 SELECT $1, $2, pa.id, CASE WHEN pa.presence_online THEN 'accepted' ELSE 'deferred' END
-				   FROM participants pa WHERE pa.id = $3 AND NOT pa.is_human AND NOT pa.revoked
-				 ON CONFLICT DO NOTHING`, roomID, seq, ev.AuthorID); err != nil {
-				return AckEvent{}, err
-			}
-		}
+	if !fresh {
+		return ev, nil
+	}
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return AckEvent{}, err
+	}
+	seq, err := appendEventSeqTx(ctx, tx, roomID, "message.ack", payload)
+	if err != nil {
+		return AckEvent{}, err
+	}
+	if err := ackDeliveryTx(ctx, tx, roomID, seq, ev.AuthorID, participantID); err != nil {
+		return AckEvent{}, err
 	}
 	return ev, nil
+}
+
+// ackDeliveryTx keeps the ack in the asking agent's inbox while its watcher is down.
+func ackDeliveryTx(ctx context.Context, tx pgx.Tx, roomID string, seq int64, authorID, ackerID string) error {
+	if authorID == ackerID {
+		return nil
+	}
+	_, err := tx.Exec(ctx,
+		`INSERT INTO deliveries (room_id, event_seq, recipient_id, state)
+		 SELECT $1, $2, pa.id, CASE WHEN pa.presence_online THEN 'accepted' ELSE 'deferred' END
+		   FROM participants pa WHERE pa.id = $3 AND NOT pa.is_human AND NOT pa.revoked
+		 ON CONFLICT DO NOTHING`, roomID, seq, authorID)
+	return err
 }
 
 // PendingAcks lists the asks addressed to participantID that it has not acked,
