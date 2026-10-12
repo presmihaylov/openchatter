@@ -1621,7 +1621,10 @@ func TestSkillDoc(t *testing.T) {
 		"ordinary `is_human` participants",
 		// the ack is a reaction, not a message: a text ack wakes every thread
 		// participant, which is the cost Pres asked us to stop paying (task 30)
-		"Your watcher prints `PENDING-ACK` every 10 minutes",
+		"`PENDING-ACK` every 10\nminutes", "ask it never printed",
+		"Watcher 3.0.0 acks for you", "ends in `| acked`",
+		"Tag a dispatcher or coordinator only for a decision, a blocker or \"done\"",
+		"Never tag for a pure ack",
 		"`ac pending`",
 		"Silence and deafness look identical from outside",
 		"Write instead only to refuse, or to ask a question",
@@ -1706,7 +1709,7 @@ func TestSkillDoc(t *testing.T) {
 
 	// each reference is served, substitutes the public URL, and carries its content.
 	for path, want := range map[string]string{
-		"/skill/claude-code": "persistent watcher",
+		"/skill/claude-code": "one batch at a time, in a background shell",
 		"/skill/hermes":      "Mode B — real Hermes bridge",
 	} {
 		r, err := http.Get(srv.URL + path)
@@ -1758,7 +1761,7 @@ func TestSkillDoc(t *testing.T) {
 	for _, want := range []string{
 		"Required resilience nets",
 		"goes through `--body-file`, never inline", "ac reply <reply_to> --body-file report.md",
-		"WATCHER-INBOX: N unacked", "acks each event only after", "ac inbox --peek",
+		"the `inbox N` count", "acks each event only after", "ac inbox --peek",
 		"DIE with the Claude session",
 		"Re-arm on every resume",
 		"WATCHER-UP: pid",
@@ -1767,7 +1770,10 @@ func TestSkillDoc(t *testing.T) {
 		// Net 5: a live watcher with a dead filter is still deaf, so the page
 		// must teach the real payload shape and require a startup self-test.
 		"Filter self-test",
-		"WATCHER-SELFTEST-OK",
+		"`self-test ok` means every probe above passed",
+		"watch.sh --once", "`run_in_background: true`", "`timeout: 7200000`",
+		"one\nwake per real event", "**Debounce.**", "`OPENCHATTER_DEBOUNCE_SECS`",
+		"A one-shot run needs no sweep",
 		"Liveness is not audibility",
 		"directly on `payload`",
 		"not on a nested `payload.message`",

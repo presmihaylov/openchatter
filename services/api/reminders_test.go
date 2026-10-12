@@ -453,7 +453,7 @@ func TestWatcherTemplateHearsReminders(t *testing.T) {
 			t.Errorf("fire: %d %v", n, err)
 		}
 	})
-	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
+	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-UP") {
 		t.Fatalf("watcher did not start clean:\n%s", out)
 	}
 	if !strings.Contains(out, "REMINDER "+mine["id"].(string)) || !strings.Contains(out, "check the build") {

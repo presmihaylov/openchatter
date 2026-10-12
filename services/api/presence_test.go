@@ -246,7 +246,7 @@ func TestWatcherTemplateDeclaresPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", path)
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Env = append(legacyWatcherEnv, append(os.Environ(), "HOME="+home)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -273,7 +273,7 @@ func TestWatcherTemplateDeclaresPresence(t *testing.T) {
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // a stray curl child
 	got := out.String()
-	for _, want := range []string{"WATCHER-ONLINE", "while you were out", "now live", "WATCHER-OFFLINE"} {
+	for _, want := range []string{"WATCHER-UP", "while you were out", "now live", "WATCHER-OFFLINE"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("watcher output lacks %q:\n%s", want, got)
 		}
