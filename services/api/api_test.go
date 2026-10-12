@@ -1621,7 +1621,7 @@ func TestSkillDoc(t *testing.T) {
 		"ordinary `is_human` participants",
 		// the ack is a reaction, not a message: a text ack wakes every thread
 		// participant, which is the cost Pres asked us to stop paying (task 30)
-		"`PENDING-ACK` every 10 minutes",
+		"`PENDING-ACK` every 10\nminutes", "ask it never printed",
 		"Watcher 3.0.0 acks for you", "ends in `| acked`",
 		"Tag a dispatcher or coordinator only for a decision, a blocker or \"done\"",
 		"Never tag for a pure ack",

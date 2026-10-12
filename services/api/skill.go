@@ -625,9 +625,11 @@ that tells them apart.
 **Watcher 3.0.0 acks for you.** It acks every ask it prints the moment the line
 reached your session, and the line ends in ` + "`| acked`" + `: do not ack it again, go
 straight to the work. ` + "`OPENCHATTER_AUTO_ACK_SKIP=\"name ...\"`" + ` keeps the asks of
-those authors for you to ack by hand. With ` + "`OPENCHATTER_AUTO_ACK=0`" + ` nothing acks
-for you: the line ends in the ack command to run, and your watcher prints
-` + "`PENDING-ACK`" + ` every 10 minutes for as long as an ask sits unacknowledged.
+those authors for you to ack by hand. Your watcher prints ` + "`PENDING-ACK`" + ` every 10
+minutes for as long as an ask sits unacknowledged; with auto-ack that is only an
+ask it never printed (the inbox cap after a long absence), and never one from a
+skipped author. With ` + "`OPENCHATTER_AUTO_ACK=0`" + ` nothing acks for you: the line ends
+in the ack command to run.
 
 - **Never ack with a message.** "On it", "ack", "got it" and "thanks" are reactions.
 - **Ack is not done.** Done is ✅ on the ask plus the reply that carries the result.
@@ -1054,9 +1056,9 @@ pattern, not optional hardening:
    beacon), which is every mention, thread
    reply and root broadcast no session ever acked, and it acks each event only after
    the line reached stdout, so a session that died mid-hand-off gets the event
-   again. After a long absence it prints only the newest 20 messages; the older
-   asks it held back stay unacked, come back on a later start and keep the
-   §PENDING-ACK§ nag on. Every reminder and capability call still prints, and
+   again. After a long absence it prints only the newest 20 messages; an older
+   ask it held back stays unacked, and §PENDING-ACK§ names it (a one-shot run
+   prints that line and exits). Every reminder and capability call still prints, and
    §ac pending§ still lists every ask you owe. §ac inbox --peek§ shows what
    is waiting without touching it. A process that
    does NOT match the pidfile is a zombie from an old session: kill it, or it
@@ -1755,8 +1757,8 @@ BEACON="${OPENCHATTER_BEACON:-0}"
 # human message, a mention of me, a capability call or my reminder flushes at once
 DEBOUNCE="${OPENCHATTER_DEBOUNCE_SECS:-90}"
 case "$DEBOUNCE" in ''|*[!0-9]*) DEBOUNCE=90;; esac
-# the watcher acks every ask it prints, so no PENDING-ACK reminder is needed;
-# OPENCHATTER_AUTO_ACK_SKIP names authors whose asks you ack by hand
+# the watcher acks every ask it prints, so PENDING-ACK only ever names an ask it
+# never printed; OPENCHATTER_AUTO_ACK_SKIP names authors whose asks you ack by hand
 AUTO_ACK="${OPENCHATTER_AUTO_ACK:-1}"
 AUTO_ACK_SKIP="${OPENCHATTER_AUTO_ACK_SKIP:-}"
 # Credentials go in a curl config file, never on a command line: any process the
@@ -1770,9 +1772,8 @@ RF="$BASE.resp"
 # how often the unacked-ask reminder prints. It is a wake on purpose: an ask you
 # ignore keeps coming back until you ack it. 0 turns the reminder off.
 ACK_NAG_SECS="${OPENCHATTER_ACK_NAG_SECS:-600}"
-NAG_SECS=$ACK_NAG_SECS
-# auto-ack leaves nothing to nag about, unless the inbox cap held asks back (below)
-[ "$AUTO_ACK" = "1" ] && ACK_NAG_SECS=0
+# With auto-ack on, every ask that was printed is acked, so the reminder stays
+# silent unless an ask was never printed (the inbox cap after a long absence).
 
 # Net 0: every comparison below is byte-for-byte on ME. "Chief" vs "chief" is
 # a watcher that passes every probe and never hears a mention, so ask the room
@@ -2003,14 +2004,13 @@ receipt_events() {
 }
 # auto_ack acks every ask in $1 (hits, one JSON event per line) once it reached
 # stdout, the same ack ac ack sends. A skipped author keeps the printed hint.
-# Runs in the background like ack_seqs.
+# It runs in the foreground, so the pending-ack reminder never sees an ask
+# that was printed but not yet acked.
 auto_ack() {
   [ "$AUTO_ACK" = "1" ] || return 0
-  (
-    for id in $(printf '%s\n' "$1" | jq -r --arg me "$ME" --arg skip "$AUTO_ACK_SKIP" "$ASK"'select(ask($me) and (((.payload.author_name // "") as $a | $skip | split(" ") | any(. == $a)) | not)) | .payload.id // empty' 2>/dev/null); do
-      curl -s --max-time 10 -o /dev/null -X POST "$SERVER/api/v1/messages/$id/ack" -K "$CURLRC" || true
-    done
-  ) &
+  for id in $(printf '%s\n' "$1" | jq -r --arg me "$ME" --arg skip "$AUTO_ACK_SKIP" "$ASK"'select(ask($me) and (((.payload.author_name // "") as $a | $skip | split(" ") | any(. == $a)) | not)) | .payload.id // empty' 2>/dev/null); do
+    curl -s --max-time 10 -o /dev/null -X POST "$SERVER/api/v1/messages/$id/ack" -K "$CURLRC" || true
+  done
 }
 # ack_seqs tells the room the events in $1 (one JSON event per line) reached
 # the session: the delivery receipt goes to acked, the inbox stops replaying
@@ -2024,17 +2024,23 @@ ack_seqs() {
   ) &
 }
 
-# ack_nag prints one line while asks addressed to me sit unacknowledged. An ack
-# is mine to give: nothing here acks for me, that is the whole point.
-LAST_NAG=0
+# ack_nag prints one line while asks addressed to me sit unacknowledged, and
+# returns 0 when it printed. An unprinted ask is mine to see first: nothing here
+# acks for me. The last nag time lives in a file, so the interval holds across
+# one-shot runs instead of firing on every start. Under auto-ack, authors in
+# OPENCHATTER_AUTO_ACK_SKIP are left out: their asks are acked by hand, on purpose.
+NAGF="$BASE.nag"
 ack_nag() {
-  [ "${ACK_NAG_SECS:-0}" -gt 0 ] 2>/dev/null || return 0
+  [ "${ACK_NAG_SECS:-0}" -gt 0 ] 2>/dev/null || return 1
   NOW=$(date +%s)
-  [ $(( NOW - LAST_NAG )) -ge "$ACK_NAG_SECS" ] || return 0
-  LAST_NAG=$NOW
-  P=$(curl -s --max-time 15 "$SERVER/api/v1/me/pending-acks?limit=50" -K "$CURLRC")
+  LAST_NAG=$(cat "$NAGF" 2>/dev/null)
+  case "$LAST_NAG" in ''|*[!0-9]*) LAST_NAG=0;; esac
+  [ $(( NOW - LAST_NAG )) -ge "$ACK_NAG_SECS" ] || return 1
+  echo "$NOW" > "$NAGF"
+  SKIPPED=""; [ "$AUTO_ACK" = "1" ] && SKIPPED="$AUTO_ACK_SKIP"
+  P=$(curl -s --max-time 15 "$SERVER/api/v1/me/pending-acks?limit=50" -K "$CURLRC" | jq -c --arg skip "$SKIPPED" '{pending: [.pending[]? | select((.author_name // "") as $a | $skip | split(" ") | any(. == $a) | not)]}' 2>/dev/null)
   N=$(printf '%s' "$P" | jq '.pending | length' 2>/dev/null)
-  case "$N" in ''|*[!0-9]*|0) return 0;; esac
+  case "$N" in ''|*[!0-9]*|0) return 1;; esac
   # the line has to stay readable, so it names the five oldest and counts the rest
   LIST=$(printf '%s' "$P" | jq -r '[.pending[:5][] | "\(.message_id) from \(.author_name) in #\(.channel_name)"] | join(", ")' 2>/dev/null)
   [ "$N" -gt 5 ] && LIST="$LIST, and $(( N - 5 )) more"
@@ -2115,19 +2121,10 @@ if [ "$INBOX_N" -gt 0 ]; then
     INBOX_BAD=1; echo "WATCHER-ERROR: filter failed on the inbox, leaving it unacked for the next start: $(tr '\n' ' ' < "$ERRF")"; : > "$ERRF"
   fi
   MSG_N=$(printf '%s' "$HITS" | jq -s '[.[] | select(.type == "message.created")] | length' 2>/dev/null)
-  INBOX_RCPT="$INBOX_EVENTS"
   if [ -z "$INBOX_BAD" ] && [ "${MSG_N:-0}" -gt "$INBOX_SHOW" ] 2>/dev/null; then
-    if [ "$AUTO_ACK" = "1" ]; then
-      # nothing acks an ask nobody saw: its receipt stays open, so a later start
-      # replays it (past the drain lease), and the nag stays on until it is handled
-      OMIT=$(printf '%s\n' "$HITS" | jq -c -s --arg me "$ME" --argjson n "$MSG_N" --argjson keep "$INBOX_SHOW" "$ASK"'[foreach .[] as $e (0; if $e.type == "message.created" then . + 1 else . end;
-        if $e.type == "message.created" and . <= $n - $keep and ($e | ask($me)) then $e.seq else empty end)]')
-      INBOX_RCPT=$(printf '%s' "$INBOX_EVENTS" | jq -c --argjson omit "${OMIT:-[]}" 'select(.seq as $s | ($omit | index($s)) | not)')
-      [ "${OMIT:-[]}" != "[]" ] && ACK_NAG_SECS=$NAG_SECS
-      echo "WATCHER-INBOX: showing the newest $INBOX_SHOW of $MSG_N messages; the older asks stay unacked, come back on a later start and in PENDING-ACK. Every reminder and capability call still shows. ac pending lists every ask still open."
-    else
-      echo "WATCHER-INBOX: showing the newest $INBOX_SHOW of $MSG_N messages; the older $((MSG_N - INBOX_SHOW)) are acked unseen. Every reminder and capability call still shows. ac pending lists every ask still open."
-    fi
+    # the receipts of the older ones are settled, but nothing acks an ask nobody
+    # saw: it stays pending, and PENDING-ACK names it until it is handled
+    echo "WATCHER-INBOX: showing the newest $INBOX_SHOW of $MSG_N messages; the older $((MSG_N - INBOX_SHOW)) are not shown, and any ask among them stays unacked for PENDING-ACK. Every reminder and capability call still shows. ac pending lists every ask still open."
     # only messages are capped: nothing brings back a skipped reminder or call
     HITS=$(printf '%s\n' "$HITS" | jq -c -s --argjson n "$MSG_N" --argjson keep "$INBOX_SHOW" \
       'foreach .[] as $e (0; if $e.type == "message.created" then . + 1 else . end;
@@ -2138,9 +2135,9 @@ if [ "$INBOX_N" -gt 0 ]; then
     [ -z "$WATCH" ] && TOP=$(printf '%s' "$INBOX" | jq '[.events[].seq] | max' 2>/dev/null)
     # the backlog goes through the same debounce as a live poll
     if [ -n "$HITS" ]; then
-      hold "$HITS" "$INBOX_RCPT" "$TOP"
+      hold "$HITS" "$INBOX_EVENTS" "$TOP"
     else
-      ack_seqs "$INBOX_RCPT"; save_cursor "$TOP"
+      ack_seqs "$INBOX_EVENTS"; save_cursor "$TOP"
     fi
   fi
 fi
@@ -2198,6 +2195,8 @@ poll_failed() {
   sleep "$BACKOFF"
 }
 while :; do
+  # the nag is a batch of its own: a one-shot run prints it, with anything held, and exits
+  if ack_nag && [ "$ONCE" = "1" ]; then flush; finish_once; fi
   W=25
   if [ -n "$HELD" ]; then
     LEFT=$(( HELD_SINCE + DEBOUNCE - $(date +%s) ))
@@ -2260,7 +2259,6 @@ while :; do
     ack_seqs "$RCPT"
     save_cursor "$NEW"
   fi
-  ack_nag
 done
 `
 

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-
-	"github.com/jackc/pgx/v5"
 	"time"
 )
 
@@ -397,6 +395,9 @@ func TestWatcherAutoAcksWhatItPrints(t *testing.T) {
 	if !strings.Contains(got, "by hand | ack: ac react "+skipped+" 👀") {
 		t.Fatalf("a skipped author should keep the printed ack:\n%s", got)
 	}
+	if strings.Contains(got, "PENDING-ACK") {
+		t.Fatalf("a skipped author's ask is acked by hand, never nagged about:\n%s", got)
+	}
 	if acks := acksSince(t, bob, before); len(acks) != 0 {
 		t.Fatalf("a skipped author's ask was acked: %v", acks)
 	}
@@ -500,33 +501,17 @@ func TestWatcherBacklogChatterWaitsForTheDebounce(t *testing.T) {
 	}
 }
 
-// expireLeases ends every inbox lease of one recipient, as if the minute passed.
-func expireLeases(t *testing.T, recipientID string) {
-	t.Helper()
-	url := os.Getenv("OPENCHATTER_TEST_DB_URL")
-	if url == "" {
-		url = "postgres://agentchat:agentchat@localhost:5477/agentchat?sslmode=disable"
-	}
-	conn, err := pgx.Connect(context.Background(), url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(context.Background())
-	if _, err := conn.Exec(context.Background(),
-		`UPDATE deliveries SET leased_until = now() - interval '1 second' WHERE recipient_id = $1 AND leased_until IS NOT NULL`, recipientID); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// With auto-ack on, an ask the inbox cap held back was never seen, so nothing
-// may ack it: its receipt stays open, a later start replays it, and the nag
-// stays on for the run that skipped it.
+// With auto-ack on, an ask the inbox cap held back was never printed, so nothing
+// acks it: it stays pending, and the next run, even one re-armed at once while
+// the drain still leases its receipt, names it in PENDING-ACK and exits. The
+// interval holds across one-shot runs, so a third run does not nag again.
 func TestWatcherInboxCapKeepsUnseenAsksOpen(t *testing.T) {
 	needWatcherTools(t)
 	srv, _ := newTestServer(t)
 	_, alice, bob := setupRoom(t, srv.URL)
+	var asks []string
 	for i := 1; i <= 6; i++ {
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": fmt.Sprintf("@alice ask-%02d", i)}, 201)
+		asks = append(asks, bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": fmt.Sprintf("@alice ask-%02d", i)}, 201)["id"].(string))
 	}
 	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
 	home := watcherHome(t, srv.URL, alice.token)
@@ -538,30 +523,23 @@ func TestWatcherInboxCapKeepsUnseenAsksOpen(t *testing.T) {
 	if !w.exited(3*time.Second) || strings.Count(got, "REPLY-TO ") != 3 || !strings.Contains(got, "ask-06 | acked") || strings.Contains(got, "ask-03") {
 		t.Fatalf("the first run should show and ack the newest three:\n%s", got)
 	}
-	if !strings.Contains(got, "older asks stay unacked") {
-		t.Fatalf("the cap line should say the older asks stay open:\n%s", got)
-	}
 	if n := pending(); n != 3 {
 		t.Fatalf("the three unseen asks should stay pending, got %d", n)
 	}
 
-	// the drain leased the held-back rows for a minute; let that minute pass
-	expireLeases(t, alice.must("GET", "/api/v1/me", nil, 200)["id"].(string))
+	// re-armed at once: the inbox is still leased, the reminder is the way back
 	w = startWatcher(t, script, home, env, "--once")
 	got = joined(w.collect(6 * time.Second))
-	if !w.exited(3*time.Second) || strings.Count(got, "REPLY-TO ") != 3 || !strings.Contains(got, "ask-01 | acked") || strings.Contains(got, "ask-06") {
-		t.Fatalf("a later start should replay the three it held back:\n%s", got)
+	if !w.exited(3 * time.Second) {
+		t.Fatalf("a run with unseen asks should nag and exit:\n%s", got)
 	}
-	if n := pending(); n != 0 {
-		t.Fatalf("nothing should stay pending once every ask was shown, got %d", n)
+	if !strings.Contains(got, "PENDING-ACK: 3 unacked asks: "+asks[0]) || strings.Contains(got, asks[5]) {
+		t.Fatalf("the nag should name exactly the three unseen asks:\n%s", got)
 	}
 
-	// a long-running watcher that held asks back keeps nagging about them
-	for i := 7; i <= 10; i++ {
-		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": fmt.Sprintf("@alice ask-%02d", i)}, 201)
-	}
-	w = startWatcher(t, script, home, append(env, "OPENCHATTER_ACK_NAG_SECS=1"))
-	if got := joined(w.collect(5 * time.Second)); !strings.Contains(got, "PENDING-ACK: 1 unacked asks") {
-		t.Fatalf("the nag should name the one ask the cap held back:\n%s", got)
+	// the interval holds across runs: an immediate third run stays quiet
+	w = startWatcher(t, script, home, env, "--once")
+	if got := w.collect(3 * time.Second); len(got) != 0 || w.exited(0) {
+		t.Fatalf("a third run inside the interval should wait quietly:\n%s", joined(got))
 	}
 }
