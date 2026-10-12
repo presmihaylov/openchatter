@@ -125,23 +125,25 @@ func TestCLIScriptServed(t *testing.T) {
 
 // The app must not know or care what sits in front of it, so no served
 // surface names a proxy vendor or carries a slot for its credentials.
-func TestServedSurfacesNameNoProxy(t *testing.T) {
+// The server bakes no proxy credential into anything it serves: a room behind
+// Cloudflare Access names its service token in each agent's env file.
+func TestServedSurfacesBakeNoProxyCredentials(t *testing.T) {
 	srv, _ := newTestServer(t)
 	surfaces := []string{"/cli.sh", "/skill", "/skill/claude-code", "/skill/hermes",
 		"/skill/watch.sh", "/skill/bridge.sh", "/skill/inject.sh"}
 	for _, g := range harnessGuides {
 		surfaces = append(surfaces, "/skill/"+g.slug)
 	}
-	vendor := regexp.MustCompile(`(?i)cloudflare|cf-access|cf_access|\{\{CF_`)
+	baked := regexp.MustCompile(`\{\{CF_|DEFAULT_CF_|\.access"`)
 	for _, surface := range surfaces {
-		if m := vendor.FindString(getText(t, srv.URL+surface)); m != "" {
-			t.Errorf("%s names a proxy vendor: %q", surface, m)
+		if m := baked.FindString(getText(t, srv.URL+surface)); m != "" {
+			t.Errorf("%s bakes in a proxy credential: %q", surface, m)
 		}
 	}
 }
 
-// frontProxy passes every request through and records any header beyond what
-// the client is meant to send, so a test can prove nothing proxy-specific leaks.
+// frontProxy passes every request through and records each CF-* header as
+// "Name: value", so a test can prove what a client sends and what it does not.
 func frontProxy(t *testing.T, upstream string) (*httptest.Server, func() []string) {
 	t.Helper()
 	target, _ := url.Parse(upstream)
@@ -149,10 +151,10 @@ func frontProxy(t *testing.T, upstream string) (*httptest.Server, func() []strin
 	var mu sync.Mutex
 	var extra []string
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for name := range r.Header {
+		for name, vals := range r.Header {
 			if strings.HasPrefix(strings.ToLower(name), "cf-") {
 				mu.Lock()
-				extra = append(extra, name)
+				extra = append(extra, name+": "+strings.Join(vals, ","))
 				mu.Unlock()
 			}
 		}
@@ -196,21 +198,58 @@ func writeEnv(t *testing.T, body string) string {
 	return path
 }
 
-// An env file written for the old proxy-aware CLI still holds two credential
-// lines. They are inert now: the CLI sends the bearer token and nothing else.
-func TestCLISendsOnlyTheBearerToken(t *testing.T) {
+// accessGate stands in for Cloudflare Access: it redirects to a login page
+// unless both service-token headers match, and passes the request on if they do.
+func accessGate(t *testing.T, upstream, id, secret string) *httptest.Server {
+	t.Helper()
+	target, _ := url.Parse(upstream)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("CF-Access-Client-Id") != id || r.Header.Get("CF-Access-Client-Secret") != secret {
+			http.Redirect(w, r, "https://team.example.com/cdn-cgi/access/login", http.StatusFound)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(gate.Close)
+	return gate
+}
+
+// The CLI sends the Access service token when the env file names it, and the
+// bearer token alone when it does not, so a room with no proxy sees no change.
+func TestCLISendsAccessHeadersOnlyWhenSet(t *testing.T) {
+	// the env file is the only source under test: clear any Access values the
+	// test process itself inherited
+	t.Setenv("CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("CF_ACCESS_CLIENT_SECRET", "")
 	srv, _ := newTestServer(t)
 	_, alice, _ := setupRoom(t, srv.URL)
 	front, extra := frontProxy(t, srv.URL)
 	cli := servedCLI(t, srv.URL)
-	env := writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+
-		"\nCF_ACCESS_CLIENT_ID=stale-id\nCF_ACCESS_CLIENT_SECRET=stale-zz9\n")
+	env := writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+"\n")
 	out, err := exec.Command("bash", cli, "--env", env, "whoami").CombinedOutput()
 	if err != nil || !strings.HasPrefix(string(out), "alice ") {
 		t.Fatalf("whoami through a plain proxy: %v\n%s", err, out)
 	}
 	if got := extra(); len(got) > 0 {
-		t.Fatalf("the CLI sent proxy headers: %v", got)
+		t.Fatalf("with no Access values the CLI sent proxy headers: %v", got)
+	}
+
+	gate := accessGate(t, srv.URL, "svc-id.access", "svc-zz9")
+	env = writeEnv(t, "SERVER="+gate.URL+"\nTOKEN="+alice.token+"\nCF_ACCESS_CLIENT_ID=svc-id.access\nCF_ACCESS_CLIENT_SECRET=svc-zz9\n")
+	out, err = exec.Command("bash", cli, "--env", env, "whoami").CombinedOutput()
+	if err != nil || !strings.HasPrefix(string(out), "alice ") {
+		t.Fatalf("whoami through Access with the service token: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "svc-zz9") {
+		t.Fatalf("the CLI printed the Access secret:\n%s", out)
+	}
+
+	// without the values the gate answers with its login page, named as a redirect
+	env = writeEnv(t, "SERVER="+gate.URL+"\nTOKEN="+alice.token+"\n")
+	out, err = exec.Command("bash", cli, "--env", env, "whoami").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "redirect (HTTP 302)") {
+		t.Fatalf("Access without the service token should be a named redirect: %v\n%s", err, out)
 	}
 }
 
@@ -333,6 +372,10 @@ func runWatcherResuming(t *testing.T, script, home string, post func()) string {
 }
 
 func TestWatcherTemplateWorksBehindAnyProxy(t *testing.T) {
+	// the env file is the only source under test: clear any Access values the
+	// test process itself inherited
+	t.Setenv("CF_ACCESS_CLIENT_ID", "")
+	t.Setenv("CF_ACCESS_CLIENT_SECRET", "")
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
 	}
@@ -352,8 +395,8 @@ func TestWatcherTemplateWorksBehindAnyProxy(t *testing.T) {
 		}
 	}
 
-	// through a plain reverse proxy, with stale proxy credentials left in the env file
-	write("SERVER=" + front.URL + "\nTOKEN=" + alice.token + "\nCF_ACCESS_CLIENT_ID=stale-id\nCF_ACCESS_CLIENT_SECRET=stale-zz9\n")
+	// through a plain reverse proxy, with no Access values in the env file
+	write("SERVER=" + front.URL + "\nTOKEN=" + alice.token + "\n")
 	out := runWatcher(t, script, home, bob)
 	if !strings.Contains(out, "are you there") || strings.Contains(out, "WATCHER-ERROR") {
 		t.Fatalf("watcher behind a proxy should hear bob cleanly:\n%s", out)
@@ -364,10 +407,18 @@ func TestWatcherTemplateWorksBehindAnyProxy(t *testing.T) {
 		}
 	}
 	if got := extra(); len(got) > 0 {
-		t.Fatalf("the watcher sent proxy headers: %v", got)
+		t.Fatalf("with no Access values the watcher sent proxy headers: %v", got)
 	}
-	if strings.Contains(out, "stale-zz9") {
-		t.Fatalf("watcher printed an env secret:\n%s", out)
+
+	// behind Access, the env file's service token gets every request through
+	write("SERVER=" + accessGate(t, srv.URL, "svc-id.access", "svc-zz9").URL + "\nTOKEN=" + alice.token +
+		"\nCF_ACCESS_CLIENT_ID=svc-id.access\nCF_ACCESS_CLIENT_SECRET=svc-zz9\n")
+	out = runWatcher(t, script, home, bob)
+	if !strings.Contains(out, "are you there") || strings.Contains(out, "WATCHER-ERROR") {
+		t.Fatalf("watcher behind Access with the service token should hear bob cleanly:\n%s", out)
+	}
+	if strings.Contains(out, "svc-zz9") {
+		t.Fatalf("watcher printed the Access secret:\n%s", out)
 	}
 
 	// straight to the server works the same

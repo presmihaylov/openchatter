@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.9.0"
+VERSION="2.10.0"
 DEFAULT_SERVER="{{SERVER}}"
 
 usage() {
@@ -128,6 +128,9 @@ FLAGS
 CONFIG
   SERVER and TOKEN come from the env file, or from $OPENCHATTER_SERVER and
   $OPENCHATTER_TOKEN. The token is never printed, not even in errors.
+  A room behind Cloudflare Access: set CF_ACCESS_CLIENT_ID and
+  CF_ACCESS_CLIENT_SECRET in the env file, and both go out as headers on every
+  request. They are never printed either. Unset, nothing extra is sent.
   A call gives up after $OPENCHATTER_CONNECT_TIMEOUT seconds without a
   connection (default 10) and $OPENCHATTER_MAX_TIME seconds without an answer
   (default 30, plus any --wait or --timeout). A DNS, connect or TLS failure is
@@ -206,6 +209,11 @@ load_config() {
   chmod 600 "$CURLRC"
   trap 'rm -f "$CURLRC"' EXIT INT TERM HUP
   printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$CURLRC"
+  # a room behind Cloudflare Access: the env file names the service token
+  if [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+    printf 'header = "CF-Access-Client-Id: %s"\nheader = "CF-Access-Client-Secret: %s"\n' \
+      "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" >> "$CURLRC"
+  fi
 }
 
 state_dir() {
