@@ -216,7 +216,7 @@ func TestWatcherHearsAcksOnItsAsks(t *testing.T) {
 		mine := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice your turn"}, 201)["id"].(string)
 		alice.must("POST", "/api/v1/messages/"+mine+"/reactions", map[string]any{"emoji": "👀"}, 200)
 	})
-	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-SELFTEST-OK") {
+	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-UP") {
 		t.Fatalf("watcher did not start clean:\n%s", out)
 	}
 	for _, want := range []string{

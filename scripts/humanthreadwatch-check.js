@@ -106,7 +106,8 @@ async function stopWatcher(run) {
     const scriptPath = path.join(temp, 'watch.sh');
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
     fs.writeFileSync(base + '.env',
-      'SERVER=' + SERVER + '\nTOKEN=' + watched.token + '\nOPENCHATTER_ACK_NAG_SECS=0\n',
+      // the one beacon says when the start passed; a short debounce keeps the run brief
+      'SERVER=' + SERVER + '\nTOKEN=' + watched.token + '\nOPENCHATTER_BEACON=1\nOPENCHATTER_DEBOUNCE_SECS=2\n',
       { mode: 0o600 });
 
     if (process.env.BROWSER_URL) {
@@ -127,8 +128,9 @@ async function stopWatcher(run) {
     await page.waitForSelector('#thread-panel:not(.hidden) #thread-input', { timeout: 10000 });
 
     watcher = startWatcher(temp, scriptPath);
-    await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-ONLINE:')), 'watcher online');
-    assert(watcher.lines.some((line) => line.includes('version 2.9.0')), 'watcher version beacon missing');
+    await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-UP:')), 'watcher up');
+    assert(watcher.lines.some((line) => line.includes('version 3.0.0, self-test ok')), 'watcher version beacon missing');
+    assert(watcher.lines.length === 1, 'a healthy start printed more than its beacon: ' + watcher.lines.join(' / '));
 
     const replyLines = () => watcher.lines.filter((line) => line.startsWith('REPLY-TO '));
     const waitForReply = (id) => waitFor(() => replyLines().some((line) => line.includes(id)), 'wake for ' + id);
@@ -198,6 +200,11 @@ async function stopWatcher(run) {
     assert(ackLines()[0].includes('please check the deploy'), 'ACKED lacks the excerpt: ' + ackLines()[0]);
     assert(!watcher.lines.some((line) => line.includes('"message.ack"') || line.includes('"message.reaction"')),
       'raw ack or reaction JSON reached the watcher output');
+
+    // every ask the watcher printed, it acked: nothing is left pending
+    const pending = await api('/api/v1/me/pending-acks', { token: watched.token });
+    assert(pending.pending.length === 0, 'the watcher left asks unacked: ' + JSON.stringify(pending.pending));
+    assert(replyLines().every((line) => line.endsWith(' | acked')), 'a printed ask was not auto-acked');
 
     console.log('THREADWATCH_CHECK_OK');
   } finally {

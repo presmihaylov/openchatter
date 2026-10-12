@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -9,13 +10,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
 // TestWatcherInboxDrain runs the served watch.sh against the test server: an
 // agent that was offline for a mention starts its watcher, which replays the
-// inbox (WATCHER-INBOX), prints the hit the way a live one prints, and acks
+// inbox, prints the hit the way a live one prints, and acks
 // it only after that, so the owner's stats show it handled. A live mention
 // during the poll loop is acked too.
 func TestWatcherInboxDrain(t *testing.T) {
@@ -57,6 +59,7 @@ func TestWatcherInboxDrain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", filepath.Join(dir, "watch.sh"))
+	cmd.Env = append(legacyWatcherEnv, os.Environ()...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -104,16 +107,13 @@ func TestWatcherInboxDrain(t *testing.T) {
 			}
 		}
 	}
-	waitFor("WATCHER-SELFTEST-OK")
-	if l := waitFor("WATCHER-INBOX:"); !strings.Contains(l, "1 unacked") {
-		t.Fatalf("inbox line: %s", l)
+	// the one beacon comes before the backlog: it counts the replayed inbox
+	// and the capabilities file registered once the inbox is drained
+	if l := waitFor("WATCHER-UP:"); !strings.Contains(l, "inbox 1,") || !strings.Contains(l, "1 capabilities registered") {
+		t.Fatalf("beacon line: %s", l)
 	}
 	waitFor("REPLY-TO")
 	waitFor("you missed this")
-	// the capabilities file is registered once the inbox is drained
-	if l := waitFor("WATCHER-CAPS:"); !strings.Contains(l, "1 registered") {
-		t.Fatalf("caps line: %s", l)
-	}
 	if n := len(bob.must("GET", "/api/v1/participants/me/capabilities", nil, 200)["capabilities"].([]any)); n != 1 {
 		t.Fatalf("watcher did not register the capability: %d", n)
 	}
@@ -164,4 +164,336 @@ func TestWatcherInboxDrain(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	_ = fmt.Sprint
+}
+
+// timedLine is one watcher stdout line and when it arrived after the start.
+type timedLine struct {
+	at   time.Duration
+	text string
+}
+
+// watcherRun is a watcher started with the 3.0.0 defaults (no legacy env).
+type watcherRun struct {
+	t     *testing.T
+	cmd   *exec.Cmd
+	start time.Time
+	lines chan timedLine
+	exit  chan error
+}
+
+// startWatcher runs script from home with extra env and args, streaming its
+// stdout line by line. The whole process group dies at cleanup.
+func startWatcher(t *testing.T, script, home string, env []string, args ...string) *watcherRun {
+	t.Helper()
+	path := filepath.Join(home, "watch.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", append([]string{path}, args...)...)
+	cmd.Env = append(append(os.Environ(), "HOME="+home), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	r := &watcherRun{t: t, cmd: cmd, start: time.Now(), lines: make(chan timedLine, 200), exit: make(chan error, 1)}
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		sc.Buffer(make([]byte, 64<<10), 1<<20)
+		for sc.Scan() {
+			r.lines <- timedLine{time.Since(r.start), sc.Text()}
+		}
+		close(r.lines)
+		r.exit <- cmd.Wait()
+	}()
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	return r
+}
+
+// collect returns every line that arrives within d, or until the watcher exits.
+func (r *watcherRun) collect(d time.Duration) []timedLine {
+	var got []timedLine
+	deadline := time.After(d)
+	for {
+		select {
+		case l, ok := <-r.lines:
+			if !ok {
+				return got
+			}
+			got = append(got, l)
+		case <-deadline:
+			return got
+		}
+	}
+}
+
+// exited reports whether the watcher ended on its own within d.
+func (r *watcherRun) exited(d time.Duration) bool {
+	select {
+	case <-r.exit:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+func joined(lines []timedLine) string {
+	var b strings.Builder
+	for _, l := range lines {
+		fmt.Fprintf(&b, "%6.2fs %s\n", l.at.Seconds(), l.text)
+	}
+	return b.String()
+}
+
+func needWatcherTools(t *testing.T) {
+	t.Helper()
+	for _, bin := range []string{"jq", "curl", "sh"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not on PATH", bin)
+		}
+	}
+}
+
+func addHuman(t *testing.T, base, secret string) *testClient {
+	t.Helper()
+	human := &testClient{t: t, base: base}
+	out := human.must("POST", "/api/v1/rooms/join", map[string]any{"invite": secret, "name": "maya", "is_human": true}, 201)
+	human.token = out["token"].(string)
+	return human
+}
+
+// A healthy start is silent: each stdout line is a wake, and a start used to
+// cost four. The opt-in beacon is exactly one line.
+func TestWatcherHealthyStartIsSilent(t *testing.T) {
+	needWatcherTools(t)
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	home := watcherHome(t, srv.URL, alice.token)
+
+	w := startWatcher(t, script, home, nil)
+	if got := w.collect(3 * time.Second); len(got) != 0 {
+		t.Fatalf("a healthy start printed:\n%s", joined(got))
+	}
+	// SIGKILL leaves the pidfile behind a dead process; a stale one must not block
+	_ = syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
+	w.exited(3 * time.Second)
+	got := startWatcher(t, script, home, []string{"OPENCHATTER_BEACON=1"}).collect(3 * time.Second)
+	if len(got) != 1 || !strings.HasPrefix(got[0].text, "WATCHER-UP: pid ") ||
+		!strings.Contains(got[0].text, "version 3.0.0, self-test ok, mode=mentions+threads") ||
+		!strings.Contains(got[0].text, "debounce 90s, auto-ack 1, one-shot 0") {
+		t.Fatalf("want one WATCHER-UP line:\n%s", joined(got))
+	}
+}
+
+// Agent chatter that does not tag me waits for the debounce and goes out as one
+// batch; a mention of me flushes it at once, and so does a human's message.
+func TestWatcherDebouncesAgentChatter(t *testing.T) {
+	needWatcherTools(t)
+	srv, _ := newTestServer(t)
+	secret, alice, bob := setupRoom(t, srv.URL)
+	human := addHuman(t, srv.URL, secret)
+	script := watcherTemplate(t, srv.URL) // WATCH="general": every agent message there is a hit
+	home := watcherHome(t, srv.URL, alice.token)
+	w := startWatcher(t, script, home, []string{"OPENCHATTER_DEBOUNCE_SECS=4"})
+	if got := w.collect(1500 * time.Millisecond); len(got) != 0 {
+		t.Fatalf("a healthy start printed:\n%s", joined(got))
+	}
+
+	posted := time.Since(w.start)
+	for i := 1; i <= 3; i++ {
+		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": fmt.Sprintf("progress %d", i)}, 201)
+	}
+	got := w.collect(7 * time.Second)
+	var hits []timedLine
+	for _, l := range got {
+		if strings.HasPrefix(l.text, "REPLY-TO ") {
+			hits = append(hits, l)
+		}
+	}
+	if len(hits) != 3 {
+		t.Fatalf("want the 3 agent messages once each:\n%s", joined(got))
+	}
+	for _, h := range hits {
+		if h.at-posted < 3*time.Second {
+			t.Fatalf("agent chatter went out before the debounce:\n%s", joined(got))
+		}
+		if h.at-hits[0].at > time.Second {
+			t.Fatalf("the held messages did not go out as one batch:\n%s", joined(got))
+		}
+	}
+
+	// held chatter rides out with a mention, well inside the debounce
+	posted = time.Since(w.start)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "more progress"}, 201)
+	time.Sleep(500 * time.Millisecond)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice your call"}, 201)
+	got = w.collect(2500 * time.Millisecond)
+	if s := joined(got); !strings.Contains(s, "more progress") || !strings.Contains(s, "your call") {
+		t.Fatalf("a mention should flush the held chatter at once:\n%s", s)
+	}
+	if last := got[len(got)-1]; last.at-posted > 3*time.Second {
+		t.Fatalf("the mention waited for the debounce:\n%s", joined(got))
+	}
+
+	// a human's message never waits either
+	posted = time.Since(w.start)
+	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "human here"}, 201)
+	got = w.collect(2500 * time.Millisecond)
+	if s := joined(got); !strings.Contains(s, "human here") {
+		t.Fatalf("a human message should go out at once:\n%s", s)
+	}
+	if got[0].at-posted > 3*time.Second {
+		t.Fatalf("the human message waited for the debounce:\n%s", joined(got))
+	}
+}
+
+// The watcher acks each ask it prints, so the asker hears it and no PENDING-ACK
+// nag follows. An author on the skip list keeps the printed ack for the agent.
+func TestWatcherAutoAcksWhatItPrints(t *testing.T) {
+	needWatcherTools(t)
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	home := watcherHome(t, srv.URL, alice.token)
+	// the nag would fire every second if auto-ack left it on
+	env := filepath.Join(home, ".openchatter", "room.alice.env")
+	if err := os.WriteFile(env, []byte("SERVER="+srv.URL+"\nTOKEN="+alice.token+"\nOPENCHATTER_ACK_NAG_SECS=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := fmt.Sprint(bob.must("GET", "/api/v1/events", nil, 200)["cursor"])
+
+	w := startWatcher(t, script, home, nil)
+	time.Sleep(1500 * time.Millisecond)
+	ask := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice please look"}, 201)["id"].(string)
+	got := joined(w.collect(4 * time.Second))
+	if !strings.Contains(got, "please look | acked") || strings.Contains(got, "| ack:") {
+		t.Fatalf("the hit should say it was acked:\n%s", got)
+	}
+	if strings.Contains(got, "PENDING-ACK") {
+		t.Fatalf("auto-ack should stop the nag:\n%s", got)
+	}
+	acks := acksSince(t, bob, before)
+	if len(acks) != 1 || acks[0]["message_id"] != ask || acks[0]["participant_name"] != "alice" {
+		t.Fatalf("bob should hear alice's ack on his ask, got %v", acks)
+	}
+	if pending := alice.must("GET", "/api/v1/me/pending-acks", nil, 200)["pending"].([]any); len(pending) != 0 {
+		t.Fatalf("nothing should be pending, got %v", pending)
+	}
+	_ = syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
+
+	// bob on the skip list: the line carries the ack for alice to run, nothing is acked
+	before = fmt.Sprint(bob.must("GET", "/api/v1/events", nil, 200)["cursor"])
+	w = startWatcher(t, script, home, []string{"OPENCHATTER_AUTO_ACK_SKIP=carol bob"})
+	time.Sleep(1500 * time.Millisecond)
+	skipped := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice by hand"}, 201)["id"].(string)
+	got = joined(w.collect(3 * time.Second))
+	if !strings.Contains(got, "by hand | ack: ac react "+skipped+" 👀") {
+		t.Fatalf("a skipped author should keep the printed ack:\n%s", got)
+	}
+	if acks := acksSince(t, bob, before); len(acks) != 0 {
+		t.Fatalf("a skipped author's ask was acked: %v", acks)
+	}
+}
+
+// --once exits after the first batch without declaring offline, and the next
+// run picks up exactly where it stopped: nothing replayed, nothing lost.
+func TestWatcherOneShotHandsOverTheCursor(t *testing.T) {
+	needWatcherTools(t)
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	home := watcherHome(t, srv.URL, alice.token)
+
+	w := startWatcher(t, script, home, nil, "--once")
+	time.Sleep(1500 * time.Millisecond)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice first"}, 201)
+	got := w.collect(5 * time.Second)
+	if !w.exited(3*time.Second) || !strings.Contains(joined(got), "first | acked") {
+		t.Fatalf("a one-shot run should print its batch and exit:\n%s", joined(got))
+	}
+	if p := participantByName(t, bob, "alice"); p["declared_offline"] == true {
+		t.Fatalf("a one-shot exit must not declare offline: %v", p)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".openchatter", "room.alice.watch.pid")); !os.IsNotExist(err) {
+		t.Fatalf("a one-shot exit should free its pidfile: %v", err)
+	}
+
+	// posted between runs: the next run prints it at once, and never "first" again
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice between runs"}, 201)
+	w = startWatcher(t, script, home, nil)
+	got = w.collect(3 * time.Second)
+	_ = syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
+	if s := joined(got); !strings.Contains(s, "between runs") || strings.Contains(s, "first") {
+		t.Fatalf("the next run should print only what came after the cursor:\n%s", s)
+	}
+
+	// ONESHOT=1 is the same switch as --once
+	w = startWatcher(t, script, home, []string{"ONESHOT=1"})
+	time.Sleep(1500 * time.Millisecond)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice third"}, 201)
+	got = w.collect(5 * time.Second)
+	if !w.exited(3*time.Second) || !strings.Contains(joined(got), "third") || strings.Contains(joined(got), "between runs") {
+		t.Fatalf("ONESHOT=1 should print one batch and exit:\n%s", joined(got))
+	}
+}
+
+// Held events are not behind the saved cursor yet, so a watcher killed while
+// it holds them prints them on its next start.
+func TestWatcherKilledWhileHoldingReplays(t *testing.T) {
+	needWatcherTools(t)
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := watcherTemplate(t, srv.URL)
+	home := watcherHome(t, srv.URL, alice.token)
+
+	w := startWatcher(t, script, home, []string{"OPENCHATTER_DEBOUNCE_SECS=60"})
+	time.Sleep(1500 * time.Millisecond)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "held chatter"}, 201)
+	if got := w.collect(2 * time.Second); len(got) != 0 {
+		t.Fatalf("the chatter should still be held:\n%s", joined(got))
+	}
+	_ = syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
+	w.exited(3 * time.Second)
+
+	w = startWatcher(t, script, home, []string{"OPENCHATTER_DEBOUNCE_SECS=0"})
+	if got := joined(w.collect(3 * time.Second)); strings.Count(got, "bob: held chatter") != 1 {
+		t.Fatalf("the held message should print once after the restart:\n%s", got)
+	}
+}
+
+// Agent chatter that piled up between two runs comes back through the inbox and
+// waits out the debounce like a live poll, instead of waking the agent at once.
+func TestWatcherBacklogChatterWaitsForTheDebounce(t *testing.T) {
+	needWatcherTools(t)
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
+	home := watcherHome(t, srv.URL, alice.token)
+	// a first run sets the cursor; the broadcasts land after it
+	w := startWatcher(t, script, home, nil)
+	time.Sleep(1500 * time.Millisecond)
+	_ = syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
+	w.exited(3 * time.Second)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel status one"}, 201)
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel status two"}, 201)
+
+	w = startWatcher(t, script, home, []string{"OPENCHATTER_DEBOUNCE_SECS=4"}, "--once")
+	got := w.collect(8 * time.Second)
+	if !w.exited(3 * time.Second) {
+		t.Fatalf("the one-shot run should exit after the batch:\n%s", joined(got))
+	}
+	var hits []timedLine
+	for _, l := range got {
+		if strings.HasPrefix(l.text, "REPLY-TO ") {
+			hits = append(hits, l)
+		}
+	}
+	if len(hits) != 2 || hits[0].at < 3*time.Second {
+		t.Fatalf("the backlog should wait for the debounce and print once:\n%s", joined(got))
+	}
 }
