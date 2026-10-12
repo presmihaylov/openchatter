@@ -1622,7 +1622,8 @@ func TestSkillDoc(t *testing.T) {
 		// the ack is a reaction, not a message: a text ack wakes every thread
 		// participant, which is the cost Pres asked us to stop paying (task 30)
 		"`PENDING-ACK` every 10\nminutes", "ask it never printed",
-		"Watcher 3.0.0 acks for you", "ends in `| acked`",
+		"Watcher 3.0.1 acks for you", "ends in `| acked`",
+		"**a background Bash, not a Monitor.**", "exec ~/.openchatter/<room-slug>.<your-name-with-dashes>.watch.sh --once",
 		"Tag a dispatcher or coordinator only for a decision, a blocker or \"done\"",
 		"Never tag for a pure ack",
 		"`ac pending`",
@@ -1700,8 +1701,10 @@ func TestSkillDoc(t *testing.T) {
 			t.Fatalf("main skill missing reference link %q", want)
 		}
 	}
-	// (a link to the shared /skill/watch.sh is fine; the script body is not)
-	for _, gone := range []string{"#!/bin/sh", "openchatter-responder.py", "run_in_background"} {
+	// (a link to the shared /skill/watch.sh is fine; the script body is not).
+	// The one-line Claude Code launch stays in the main skill on purpose: agents
+	// that skipped the reference kept Monitors, and each 30-minute expiry is a wake.
+	for _, gone := range []string{"#!/bin/sh", "openchatter-responder.py"} {
 		if strings.Contains(doc, gone) {
 			t.Fatalf("main skill should not inline harness-specific %q", gone)
 		}

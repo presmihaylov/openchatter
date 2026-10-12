@@ -188,10 +188,11 @@ func TestWatcherInboxReplayKeepsRemindersAndCalls(t *testing.T) {
 	}
 }
 
-// A reaction or an ack on alice's ask by its addressee prints one ACKED line, so
-// she knows the ask landed. Her own acks and acks on other people's asks stay
-// silent, and the ack event never reaches her session as raw JSON.
-func TestWatcherHearsAcksOnItsAsks(t *testing.T) {
+// An ack never wakes anyone, the asker included: a reaction or an explicit ack
+// on alice's ask prints nothing, and neither does anyone else's ack. The ack
+// still holds a receipt for alice, and the watcher settles it unseen, so the
+// inbox never replays it.
+func TestWatcherNeverWakesForAnAck(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
 	}
@@ -203,42 +204,29 @@ func TestWatcherHearsAcksOnItsAsks(t *testing.T) {
 	}, 201)
 	human.token = joined["token"].(string)
 	script := strings.Replace(watcherTemplate(t, srv.URL), `WATCH="general" #`, `WATCH="" #`, 1)
-	var byReaction, byAck string
 	out := runWatcherPosting(t, script, watcherHome(t, srv.URL, alice.token), func() {
-		byReaction = alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob please review the plan"}, 201)["id"].(string)
-		byAck = alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob a broadcast-style ask"}, 201)["id"].(string)
+		byReaction := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob please review the plan"}, 201)["id"].(string)
+		byAck := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob a broadcast-style ask"}, 201)["id"].(string)
 		bob.must("POST", "/api/v1/messages/"+byReaction+"/reactions", map[string]any{"emoji": "👀"}, 200)
 		bob.must("POST", "/api/v1/messages/"+byAck+"/ack", nil, 200)
-		// somebody else's ask, acked by its addressee: not alice's news
 		foreign := human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob a human ask"}, 201)["id"].(string)
 		bob.must("POST", "/api/v1/messages/"+foreign+"/reactions", map[string]any{"emoji": "👀"}, 200)
-		// alice's own ack on an ask to her
-		mine := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice your turn"}, 201)["id"].(string)
-		alice.must("POST", "/api/v1/messages/"+mine+"/reactions", map[string]any{"emoji": "👀"}, 200)
+		time.Sleep(time.Second)
 	})
 	if strings.Contains(out, "WATCHER-ERROR") || !strings.Contains(out, "WATCHER-UP") {
 		t.Fatalf("watcher did not start clean:\n%s", out)
 	}
-	for _, want := range []string{
-		"ACKED " + byReaction + " by bob 👀: @bob please review the plan",
-		"ACKED " + byAck + " by bob: @bob a broadcast-style ask",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("want %q:\n%s", want, out)
-		}
+	if strings.Contains(out, "ACKED ") || strings.Contains(out, `"type":"message.ack"`) || strings.Contains(out, `"type":"message.reaction"`) {
+		t.Fatalf("an ack or reaction reached the session:\n%s", out)
 	}
-	if n := strings.Count(out, "ACKED "); n != 2 {
-		t.Fatalf("printed %d ACKED lines, want 2:\n%s", n, out)
-	}
-	if strings.Contains(out, `"type":"message.ack"`) || strings.Contains(out, `"type":"message.reaction"`) {
-		t.Fatalf("an ack or reaction reached the session as raw JSON:\n%s", out)
+	if left := alice.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)["events"].([]any); len(left) != 0 {
+		t.Fatalf("the ack receipts should be settled unseen, %d left: %v", len(left), left)
 	}
 }
 
-// An ack that lands while the asker's watcher is down used to sit behind the
-// cursor: the next start drained a later mention, jumped past it and never
-// printed ACKED. The ack now holds a receipt, so the inbox replays it once.
-func TestWatcherHearsAnAckMadeWhileItWasDown(t *testing.T) {
+// An ack made while the asker's watcher was down holds a receipt; the next
+// start settles it without a line, and a later mention still comes through.
+func TestWatcherSettlesAnAckMadeWhileItWasDown(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("template needs jq")
 	}
@@ -254,14 +242,14 @@ func TestWatcherHearsAnAckMadeWhileItWasDown(t *testing.T) {
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice a later question"}, 201)
 
 	out := runWatcherResuming(t, script, home, func() {})
-	if want := "ACKED " + ask + " by bob 👀: @bob please review the plan"; !strings.Contains(out, want) {
-		t.Fatalf("want %q after the restart:\n%s", want, out)
+	if strings.Contains(out, "ACKED ") || strings.Contains(out, `"type":"message.ack"`) {
+		t.Fatalf("the ack made while down should not print:\n%s", out)
 	}
 	if !strings.Contains(out, "a later question") {
-		t.Fatalf("the later mention should replay too:\n%s", out)
+		t.Fatalf("the later mention should replay:\n%s", out)
 	}
-	if again := runWatcherResuming(t, script, home, func() {}); strings.Contains(again, "ACKED ") {
-		t.Fatalf("the replayed ack was not acked, so it printed twice:\n%s", again)
+	if left := alice.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)["events"].([]any); len(left) != 0 {
+		t.Fatalf("the ack receipt should be settled, %d left", len(left))
 	}
 }
 

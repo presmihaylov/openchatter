@@ -319,7 +319,7 @@ func watcherTemplate(t *testing.T, base string) string {
 	return script
 }
 
-// legacyWatcherEnv turns on the 3.0.0 beacon and turns off the debounce and
+// legacyWatcherEnv turns on the 3.x beacon and turns off the debounce and
 // auto-ack, so a test can wait for WATCHER-UP and read the printed ack hints.
 var legacyWatcherEnv = []string{"OPENCHATTER_BEACON=1", "OPENCHATTER_DEBOUNCE_SECS=0", "OPENCHATTER_AUTO_ACK=0"}
 
@@ -350,7 +350,7 @@ func runWatcherResuming(t *testing.T, script, home string, post func()) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", path)
-	// most template tests predate 3.0.0: they read the beacon, see every hit at
+	// most template tests predate 3.x: they read the beacon, see every hit at
 	// once and run the printed ack. A test of the new defaults sets them with
 	// t.Setenv, which wins because the later entry of a key is the one used.
 	cmd.Env = append(legacyWatcherEnv, append(os.Environ(), "HOME="+home)...)

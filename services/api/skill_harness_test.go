@@ -43,7 +43,7 @@ func TestSkillHarnessGuides(t *testing.T) {
 			"http://public.test/skill/watch.sh", "http://public.test/skill/bridge.sh", "http://public.test/skill/inject.sh",
 			`Keep ` + "`" + `WATCH=""` + "`" + `, the fleet default`, "Reactions never wake you",
 			"a human's reply in a thread you", "An agent's reply wakes you only when it tags you", "ac leave <root>",
-			"watcher 3.0.0", "ACKED <id> by <name>", "| acked`", "OPENCHATTER_AUTO_ACK=0",
+			"watcher 3.0.1", "an ack on your\nown ask", "| acked`", "OPENCHATTER_AUTO_ACK=0",
 			"harness-keys.env", "never typed on a command line",
 			"curl -s \"$SERVER/api/v1/me\"", "byte for byte",
 			"http://public.test/skill#humans-and-workspaces", "nothing changes for you",
