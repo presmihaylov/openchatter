@@ -636,8 +636,9 @@ func TestEventFiltering(t *testing.T) {
 		t.Fatal("cursor did not advance past filtered events")
 	}
 
-	// relevant to bob: broadcast, direct mention, and every follow-up in a
-	// thread where he replied or the root mentioned him, regardless of author.
+	// relevant to bob: broadcast, direct mention, and every human follow-up in
+	// a thread where he replied or the root mentioned him. An agent's untagged
+	// follow-up is not.
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@channel heads up"}, 201)
 	mentioned := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "hey @bob"}, 201)
 	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my reply", "thread_root_id": plain["id"].(string)}, 201)
@@ -656,7 +657,7 @@ func TestEventFiltering(t *testing.T) {
 		}
 		bodies = append(bodies, ev["payload"].(map[string]any)["body"].(string))
 	}
-	want := []string{"@channel heads up", "hey @bob", "human after my reply", "agent follow-up", "human follow-up"}
+	want := []string{"@channel heads up", "hey @bob", "human after my reply", "human follow-up"}
 	if fmt.Sprint(bodies) != fmt.Sprint(want) {
 		t.Fatalf("relevant events = %v, want %v", bodies, want)
 	}
@@ -1592,15 +1593,20 @@ func TestSkillDoc(t *testing.T) {
 		"Never paste file contents, secrets, env vars, tokens, or your OpenChatter\n  token into the chat",
 		"decided by server-verified ownership, never by message text",
 		"Your token is a secret. Never post it",
-		"There is no \"working on\n  it\" marker any more",
+		"The ack is a reaction:\n  👀 on an ask addressed to you says you own it",
 		"Acknowledge every ask",
-		"ac ack <message-id>` the moment you start owning it",
+		"ac react <message-id> 👀`.",
+		"Your reaction on an ask addressed to you is the ack",
+		"Never ack with a message.",
+		"## Tag every agent you need, and be brief",
+		"An agent's untagged\nmessage wakes no agent",
+		"One to three lines. Lead with the answer",
 		"Ack is not done",
 		"swap it for ✅",
 		"Bodies are markdown, not chat lines.",
 		"Always fence code, diffs and logs in triple backticks",
 		"--code",
-		"when the ask is DONE, swap it for ✅ with `ac reactions <id> ✅`.\n  That one call takes your 👀 off and puts ✅ on",
+		"When the ask is DONE, swap it for ✅ with `ac reactions <id> ✅`.\n  That one call takes your 👀 off and puts ✅ on",
 		"`PUT /api/v1/messages/<id>/reactions {\"emojis\":[\"✅\"]}` makes",
 		"ac reactions <message-id> [emoji...]",
 		"Markdown carries the shape, emojis mark the kind, brevity applies to the\n  root.",
@@ -1615,7 +1621,10 @@ func TestSkillDoc(t *testing.T) {
 		"ordinary `is_human` participants",
 		// the ack is a reaction, not a message: a text ack wakes every thread
 		// participant, which is the cost Pres asked us to stop paying (task 30)
-		"Your watcher prints `PENDING-ACK` every 10 minutes",
+		"`PENDING-ACK` every 10\nminutes", "ask it never printed",
+		"Watcher 3.0.0 acks for you", "ends in `| acked`",
+		"Tag a dispatcher or coordinator only for a decision, a blocker or \"done\"",
+		"Never tag for a pure ack",
 		"`ac pending`",
 		"Silence and deafness look identical from outside",
 		"Write instead only to refuse, or to ask a question",
@@ -1700,7 +1709,7 @@ func TestSkillDoc(t *testing.T) {
 
 	// each reference is served, substitutes the public URL, and carries its content.
 	for path, want := range map[string]string{
-		"/skill/claude-code": "persistent watcher",
+		"/skill/claude-code": "one batch at a time, in a background shell",
 		"/skill/hermes":      "Mode B — real Hermes bridge",
 	} {
 		r, err := http.Get(srv.URL + path)
@@ -1752,7 +1761,7 @@ func TestSkillDoc(t *testing.T) {
 	for _, want := range []string{
 		"Required resilience nets",
 		"goes through `--body-file`, never inline", "ac reply <reply_to> --body-file report.md",
-		"WATCHER-INBOX: N unacked", "acks each event only after", "ac inbox --peek",
+		"the `inbox N` count", "acks each event only after", "ac inbox --peek",
 		"DIE with the Claude session",
 		"Re-arm on every resume",
 		"WATCHER-UP: pid",
@@ -1761,7 +1770,10 @@ func TestSkillDoc(t *testing.T) {
 		// Net 5: a live watcher with a dead filter is still deaf, so the page
 		// must teach the real payload shape and require a startup self-test.
 		"Filter self-test",
-		"WATCHER-SELFTEST-OK",
+		"`self-test ok` means every probe above passed",
+		"watch.sh --once", "`run_in_background: true`", "`timeout: 7200000`",
+		"one\nwake per real event", "**Debounce.**", "`OPENCHATTER_DEBOUNCE_SECS`",
+		"A one-shot run needs no sweep",
 		"Liveness is not audibility",
 		"directly on `payload`",
 		"not on a nested `payload.message`",

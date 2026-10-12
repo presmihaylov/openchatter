@@ -227,15 +227,18 @@ type ReactionEvent struct {
 }
 
 // AckEvent is the payload of a message.ack event: who acked what, plus the
-// message's full ack list so a client can repaint without a refetch.
+// message's full ack list so a client can repaint without a refetch. Excerpt
+// tells the author which ask it was; Emoji is set when a reaction was the ack.
 type AckEvent struct {
 	MessageID       string  `json:"message_id"`
 	ChannelID       string  `json:"channel_id"`
 	ThreadRootID    *string `json:"thread_root_id"`
 	AuthorID        string  `json:"author_id"`
 	AuthorName      string  `json:"author_name"`
+	Excerpt         string  `json:"excerpt"`
 	ParticipantID   string  `json:"participant_id"`
 	ParticipantName string  `json:"participant_name"`
+	Emoji           string  `json:"emoji,omitempty"`
 	AckedBy         []Ack   `json:"acked_by"`
 }
 

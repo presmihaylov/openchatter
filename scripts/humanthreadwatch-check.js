@@ -1,7 +1,7 @@
 // Real-browser + real served-watcher regression for the agent routing contract.
-// Human and agent replies wake the participating test agent; its own reply and
-// a reply in a foreign broadcast thread do not. Direct mentions and root
-// broadcasts still wake.
+// A human reply wakes the participating test agent; an untagged agent reply, its
+// own reply and a reply in a foreign broadcast thread do not. Direct mentions
+// and root broadcasts still wake, and a human reaction on its ask prints ACKED.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/humanthreadwatch-check.js
 const fs = require('fs');
 const os = require('os');
@@ -106,7 +106,8 @@ async function stopWatcher(run) {
     const scriptPath = path.join(temp, 'watch.sh');
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
     fs.writeFileSync(base + '.env',
-      'SERVER=' + SERVER + '\nTOKEN=' + watched.token + '\nOPENCHATTER_ACK_NAG_SECS=0\n',
+      // the one beacon says when the start passed; a short debounce keeps the run brief
+      'SERVER=' + SERVER + '\nTOKEN=' + watched.token + '\nOPENCHATTER_BEACON=1\nOPENCHATTER_DEBOUNCE_SECS=2\n',
       { mode: 0o600 });
 
     if (process.env.BROWSER_URL) {
@@ -127,8 +128,9 @@ async function stopWatcher(run) {
     await page.waitForSelector('#thread-panel:not(.hidden) #thread-input', { timeout: 10000 });
 
     watcher = startWatcher(temp, scriptPath);
-    await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-ONLINE:')), 'watcher online');
-    assert(watcher.lines.some((line) => line.includes('version 2.7.0')), 'watcher version beacon missing');
+    await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-UP:')), 'watcher up');
+    assert(watcher.lines.some((line) => line.includes('version 3.0.0, self-test ok')), 'watcher version beacon missing');
+    assert(watcher.lines.length === 1, 'a healthy start printed more than its beacon: ' + watcher.lines.join(' / '));
 
     const replyLines = () => watcher.lines.filter((line) => line.startsWith('REPLY-TO '));
     const waitForReply = (id) => waitFor(() => replyLines().some((line) => line.includes(id)), 'wake for ' + id);
@@ -156,8 +158,12 @@ async function stopWatcher(run) {
     assert(replyLines().filter((line) => line.includes(humanMessage.id)).length === 1, 'human reply double-woke');
 
     const agentReply = await say(peer.token, 'peer agent untagged reply', { thread_root_id: root.id });
-    await waitForReply(agentReply.id);
-    assert(replyLines().filter((line) => line.includes(agentReply.id)).length === 1, 'agent reply did not wake exactly once');
+    await waitThrough(agentReply.id);
+    assert(!replyLines().some((line) => line.includes(agentReply.id)), 'untagged agent reply woke watcher');
+
+    const taggedReply = await say(peer.token, '@watch-agent tagged thread reply', { thread_root_id: root.id });
+    await waitForReply(taggedReply.id);
+    assert(replyLines().filter((line) => line.includes(taggedReply.id)).length === 1, 'tagged agent reply did not wake exactly once');
 
     const ownReply = await say(watched.token, 'watch agent own reply', { thread_root_id: root.id });
     await waitThrough(ownReply.id);
@@ -177,6 +183,28 @@ async function stopWatcher(run) {
     await waitThrough(foreignBroadcastReply.id);
     assert(!replyLines().some((line) => line.includes(foreignBroadcastReply.id)),
       'reply in a foreign broadcast thread woke watcher');
+
+    // the human acks the agent's ask with a reaction in the browser
+    const human = (await api('/api/v1/me', { token: session, slug })).name;
+    const ask = await say(watched.token, '@' + human + ' please check the deploy');
+    await page.goto(BROWSER_SERVER + '/w/' + slug + '/c/general', { waitUntil: 'domcontentloaded' });
+    const askSel = '#messages .msg[data-id="' + ask.id + '"]';
+    await page.waitForSelector(askSel, { timeout: 10000 });
+    await page.hover(askSel);
+    await page.click(askSel + ' .msg-actions button[data-act="react"]');
+    await page.waitForSelector('.reaction-picker .rp-quick button', { timeout: 4000 });
+    await page.click('.reaction-picker .rp-quick button');
+    const ackLines = () => watcher.lines.filter((line) => line.startsWith('ACKED ' + ask.id));
+    await waitFor(() => ackLines().length > 0, 'ACKED for the ask');
+    assert(ackLines()[0].startsWith('ACKED ' + ask.id + ' by ' + human + ' 👀: '), 'ACKED line: ' + ackLines()[0]);
+    assert(ackLines()[0].includes('please check the deploy'), 'ACKED lacks the excerpt: ' + ackLines()[0]);
+    assert(!watcher.lines.some((line) => line.includes('"message.ack"') || line.includes('"message.reaction"')),
+      'raw ack or reaction JSON reached the watcher output');
+
+    // every ask the watcher printed, it acked: nothing is left pending
+    const pending = await api('/api/v1/me/pending-acks', { token: watched.token });
+    assert(pending.pending.length === 0, 'the watcher left asks unacked: ' + JSON.stringify(pending.pending));
+    assert(replyLines().every((line) => line.endsWith(' | acked')), 'a printed ask was not auto-acked');
 
     console.log('THREADWATCH_CHECK_OK');
   } finally {

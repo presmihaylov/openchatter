@@ -69,8 +69,9 @@ func TestDeliveryReceipts(t *testing.T) {
 	}
 
 	// 2. bob goes offline; two mentions and a root broadcast queue as deferred,
-	// as do both HUMAN and AGENT replies in a thread bob wrote in. A reply in a
-	// foreign thread and a broadcast inside that thread do not.
+	// as do a HUMAN reply and a tagged agent reply in a thread bob wrote in. An
+	// agent's untagged reply, a reply in a foreign thread and a broadcast inside
+	// that thread do not.
 	bob.must("POST", "/api/v1/me/offline", nil, 200)
 	m1 := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob two"}, 201)
 	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob three"}, 201)
@@ -78,7 +79,8 @@ func TestDeliveryReceipts(t *testing.T) {
 	// bob's own root, written while offline (a request touches presence; go offline again after)
 	root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "bob's root"}, 201)
 	bob.must("POST", "/api/v1/me/offline", nil, 200)
-	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "agent untagged, delivered", "thread_root_id": root["id"]}, 201)
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "agent untagged, not delivered", "thread_root_id": root["id"]}, 201)
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob agent tagged, delivered", "thread_root_id": root["id"]}, 201)
 	human.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "five, human untagged", "thread_root_id": root["id"]}, 201)
 	// foreign thread: alice's root, alice's reply; bob is not in it
 	foreign := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "alice root"}, 201)
@@ -89,6 +91,9 @@ func TestDeliveryReceipts(t *testing.T) {
 	peek := bob.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)
 	if n := len(peek["events"].([]any)); n != 5 {
 		t.Fatalf("peek want 5 deferred events (two mentions, a root broadcast, two thread replies), got %d: %v", n, bodies(peek))
+	}
+	if strings.Contains(fmt.Sprint(bodies(peek)), "agent untagged") {
+		t.Fatalf("an agent's untagged reply queued a receipt: %v", bodies(peek))
 	}
 	for _, r := range peek["receipts"].([]any) {
 		if r.(map[string]any)["state"] != "deferred" {
@@ -226,8 +231,8 @@ func TestDeliveryReceipts(t *testing.T) {
 	}
 }
 
-// Mentioning an agent enrolls it in the thread for every later reply, even if
-// the agent never writes there.
+// Mentioning an agent enrolls it in the thread for every later human reply,
+// even if the agent never writes there. An agent's untagged reply wakes nobody.
 func TestThreadDeliveryIncludesMentionedAgent(t *testing.T) {
 	srv, _ := newTestServer(t)
 	secret, alice, bob := setupRoom(t, srv.URL)
@@ -256,11 +261,10 @@ func TestThreadDeliveryIncludesMentionedAgent(t *testing.T) {
 	}, 201)
 	peek := bob.must("GET", "/api/v1/me/inbox?peek=1", nil, 200)
 	events := peek["events"].([]any)
-	if len(events) != 2 {
-		t.Fatalf("later receipt count = %d, want both thread replies: %v", len(events), bodies(peek))
+	if len(events) != 1 {
+		t.Fatalf("later receipt count = %d, want the human reply only: %v", len(events), bodies(peek))
 	}
 	for i, want := range []struct{ body, kind, participants string }{
-		{"agent follow-up", "agent", "[alice bob]"},
 		{"human follow-up", "human", "[alice bob maya]"},
 	} {
 		payload := events[i].(map[string]any)["payload"].(map[string]any)

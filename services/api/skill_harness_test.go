@@ -42,13 +42,13 @@ func TestSkillHarnessGuides(t *testing.T) {
 			`"ac" means that`, "same command with your env file, nothing else",
 			"http://public.test/skill/watch.sh", "http://public.test/skill/bridge.sh", "http://public.test/skill/inject.sh",
 			`Keep ` + "`" + `WATCH=""` + "`" + `, the fleet default`, "Reactions never wake you",
-			"every reply in a thread", "Human and agent replies both wake you", "ac leave <root>",
-			"watcher 2.7.0",
+			"a human's reply in a thread you", "An agent's reply wakes you only when it tags you", "ac leave <root>",
+			"watcher 3.0.0", "ACKED <id> by <name>", "| acked`", "OPENCHATTER_AUTO_ACK=0",
 			"harness-keys.env", "never typed on a command line",
 			"curl -s \"$SERVER/api/v1/me\"", "byte for byte",
 			"http://public.test/skill#humans-and-workspaces", "nothing changes for you",
 			"launchd", "systemd", "enable-linger",
-			"## 7. Self-test beacons", "WATCHER-SELFTEST-OK", "BRIDGE-UP", "INJECT-UP",
+			"## 7. Self-test beacons", "OPENCHATTER_BEACON=1", "BRIDGE-UP", "INJECT-UP",
 			"## 8. Troubleshooting",
 			"# You are <your-name> in the OpenChatter room",
 			"HARNESS=\"" + slug + "\"",
@@ -68,7 +68,7 @@ func TestSkillHarnessGuides(t *testing.T) {
 	// contract as the generated harness pages.
 	for _, path := range []string{"/skill", "/skill/claude-code", "/skill/hermes"} {
 		doc := getText(t, srv.URL+path)
-		for _, want := range []string{"every reply", "ac leave", "human", "agent"} {
+		for _, want := range []string{"human reply", "ac leave", "human", "agent"} {
 			if !strings.Contains(doc, want) {
 				t.Fatalf("%s missing participant-thread routing text %q", path, want)
 			}
@@ -167,7 +167,7 @@ func runScriptPosting(t *testing.T, script, home string, env []string, post func
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", path)
-	cmd.Env = append(append(os.Environ(), "HOME="+home), env...)
+	cmd.Env = append(append(legacyWatcherEnv, append(os.Environ(), "HOME="+home)...), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -201,7 +201,7 @@ func TestBridgeRunsOneTurnPerEvent(t *testing.T) {
 	}, func() {
 		bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice are you there"}, 201)
 	})
-	for _, want := range []string{"BRIDGE-UP: pid", "harness=codex", "WATCHER-SELFTEST-OK"} {
+	for _, want := range []string{"BRIDGE-UP: pid", "harness=codex", "WATCHER-UP"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("bridge output lacks %q:\n%s", want, out)
 		}
@@ -289,9 +289,9 @@ func TestInjectDeliversLine(t *testing.T) {
 	}
 	got := string(raw)
 	for _, want := range []string{"WATCHER-UP", "REPLY-TO ", "@alice ping",
-		// the delivered line must carry the explicit ack, not an "on it" (task 32)
-		"| ack: ac ack ",
-		"run the ack: command on that line, then fetch the thread with ac thread <id>, act, and answer with ac reply <id>"} {
+		// the delivered line must carry the reaction ack, not an "on it"
+		"| ack: ac react ",
+		"run the ack: command if the line ends in one, then fetch the thread with ac thread <id>, act, and answer with ac reply <id>"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("delivered lines lack %q:\n%s", want, got)
 		}
