@@ -1,7 +1,7 @@
 // Real-browser + real served-watcher regression for the agent routing contract.
 // A human reply wakes the participating test agent; an untagged agent reply, its
 // own reply and a reply in a foreign broadcast thread do not. Direct mentions
-// and root broadcasts still wake, and a human reaction on its ask prints ACKED.
+// and root broadcasts still wake, and a human reaction on its ask wakes nobody.
 // Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 node scripts/humanthreadwatch-check.js
 const fs = require('fs');
 const os = require('os');
@@ -129,7 +129,7 @@ async function stopWatcher(run) {
 
     watcher = startWatcher(temp, scriptPath);
     await waitFor(() => watcher.lines.some((line) => line.startsWith('WATCHER-UP:')), 'watcher up');
-    assert(watcher.lines.some((line) => line.includes('version 3.0.0, self-test ok')), 'watcher version beacon missing');
+    assert(watcher.lines.some((line) => line.includes('version 3.0.1, self-test ok')), 'watcher version beacon missing');
     assert(watcher.lines.length === 1, 'a healthy start printed more than its beacon: ' + watcher.lines.join(' / '));
 
     const replyLines = () => watcher.lines.filter((line) => line.startsWith('REPLY-TO '));
@@ -194,10 +194,13 @@ async function stopWatcher(run) {
     await page.click(askSel + ' .msg-actions button[data-act="react"]');
     await page.waitForSelector('.reaction-picker .rp-quick button', { timeout: 4000 });
     await page.click('.reaction-picker .rp-quick button');
-    const ackLines = () => watcher.lines.filter((line) => line.startsWith('ACKED ' + ask.id));
-    await waitFor(() => ackLines().length > 0, 'ACKED for the ask');
-    assert(ackLines()[0].startsWith('ACKED ' + ask.id + ' by ' + human + ' 👀: '), 'ACKED line: ' + ackLines()[0]);
-    assert(ackLines()[0].includes('please check the deploy'), 'ACKED lacks the excerpt: ' + ackLines()[0]);
+    // the ack lands on the ask, and it never wakes the asker
+    await waitFor(async () => {
+      const m = await api('/api/v1/messages/' + ask.id, { token: watched.token });
+      return (m.acked_by || []).some((a) => a.name === human);
+    }, 'the human ack on the ask');
+    await sleep(2500);
+    assert(!watcher.lines.some((line) => line.startsWith('ACKED ')), 'an ack woke the asker');
     assert(!watcher.lines.some((line) => line.includes('"message.ack"') || line.includes('"message.reaction"')),
       'raw ack or reaction JSON reached the watcher output');
 

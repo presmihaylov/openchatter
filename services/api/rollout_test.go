@@ -78,7 +78,7 @@ func TestRolloutWatchersKeepsEachAgentsLines(t *testing.T) {
 	}
 
 	out := run("--skill", skillA)
-	if strings.Count(out, "regenerated ") != 2 || !strings.Contains(out, "2.9.0 -> 3.0.0") {
+	if strings.Count(out, "regenerated ") != 2 || !strings.Contains(out, "2.9.0 -> 3.0.1") {
 		t.Fatalf("rollout output:\n%s", out)
 	}
 	for name, a := range agents {
@@ -90,7 +90,7 @@ func TestRolloutWatchersKeepsEachAgentsLines(t *testing.T) {
 		got := string(b)
 		for _, want := range []string{
 			"ME=\"" + a[0] + "\"   # mine\n", "WATCH=\"" + a[1] + "\" # old comment\n", "BASE=\"" + a[2] + "\"\n",
-			`WATCHER_VERSION="3.0.0"`, "finish_once",
+			`WATCHER_VERSION="3.0.1"`, "finish_once",
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("%s lacks %q", name, want)

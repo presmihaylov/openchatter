@@ -172,7 +172,7 @@ type timedLine struct {
 	text string
 }
 
-// watcherRun is a watcher started with the 3.0.0 defaults (no legacy env).
+// watcherRun is a watcher started with the 3.x defaults (no legacy env).
 type watcherRun struct {
 	t     *testing.T
 	cmd   *exec.Cmd
@@ -284,7 +284,7 @@ func TestWatcherHealthyStartIsSilent(t *testing.T) {
 	w.exited(3 * time.Second)
 	got := startWatcher(t, script, home, []string{"OPENCHATTER_BEACON=1"}).collect(3 * time.Second)
 	if len(got) != 1 || !strings.HasPrefix(got[0].text, "WATCHER-UP: pid ") ||
-		!strings.Contains(got[0].text, "version 3.0.0, self-test ok, mode=mentions+threads") ||
+		!strings.Contains(got[0].text, "version 3.0.1, self-test ok, mode=mentions+threads") ||
 		!strings.Contains(got[0].text, "debounce 90s, auto-ack 1, one-shot 0") {
 		t.Fatalf("want one WATCHER-UP line:\n%s", joined(got))
 	}
