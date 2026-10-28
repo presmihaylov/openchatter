@@ -279,6 +279,10 @@ func (w *Worker) send(ctx context.Context, j models.WebhookJob) string {
 	req.Header.Set("X-OpenChatter-Delivery", j.ID)
 	req.Header.Set("X-OpenChatter-Timestamp", strconv.FormatInt(ts, 10))
 	req.Header.Set("X-OpenChatter-Signature", Sign(j.Secret, ts, body))
+	// an endpoint behind its own auth gets the value the agent registered, as is
+	if j.Authorization != "" {
+		req.Header.Set("Authorization", j.Authorization)
+	}
 	resp, err := w.client.Do(req)
 	if err != nil {
 		switch {

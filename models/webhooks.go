@@ -21,6 +21,7 @@ const WebhookMaxFailures = 10
 type Webhook struct {
 	URL                 string     `json:"url"`
 	SecretSet           bool       `json:"secret_set"`
+	AuthorizationSet    bool       `json:"authorization_set"`
 	ConsecutiveFailures int        `json:"consecutive_failures"`
 	DisabledAt          *time.Time `json:"disabled_at"`
 	LastError           *string    `json:"last_error"`
@@ -38,21 +39,27 @@ type WebhookJob struct {
 	Attempts      int
 	URL           string
 	Secret        string
+	Authorization string
 	Message       Message
 }
 
-// SetWebhook stores or replaces the agent's hook and re-enables it.
-func (s *Store) SetWebhook(ctx context.Context, participantID, url, secret string) (Webhook, error) {
+// SetWebhook stores or replaces the agent's hook and re-enables it. An empty
+// authorization stores none: a PUT replaces the whole hook.
+func (s *Store) SetWebhook(ctx context.Context, participantID, url, secret, authorization string) (Webhook, error) {
+	var auth *string
+	if authorization != "" {
+		auth = &authorization
+	}
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO participant_webhooks (participant_id, url, secret)
-		 VALUES ($1, $2, $3)
+		`INSERT INTO participant_webhooks (participant_id, url, secret, authorization_value)
+		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (participant_id) DO UPDATE SET
-		   url = EXCLUDED.url, secret = EXCLUDED.secret, consecutive_failures = 0,
-		   disabled_at = NULL, last_error = NULL, updated_at = now()
-		 RETURNING url, consecutive_failures, disabled_at, last_error, updated_at`,
-		participantID, url, secret)
+		   url = EXCLUDED.url, secret = EXCLUDED.secret, authorization_value = EXCLUDED.authorization_value,
+		   consecutive_failures = 0, disabled_at = NULL, last_error = NULL, updated_at = now()
+		 RETURNING url, authorization_value IS NOT NULL, consecutive_failures, disabled_at, last_error, updated_at`,
+		participantID, url, secret, auth)
 	w := Webhook{SecretSet: true}
-	err := row.Scan(&w.URL, &w.ConsecutiveFailures, &w.DisabledAt, &w.LastError, &w.UpdatedAt)
+	err := row.Scan(&w.URL, &w.AuthorizationSet, &w.ConsecutiveFailures, &w.DisabledAt, &w.LastError, &w.UpdatedAt)
 	return w, err
 }
 
@@ -60,9 +67,9 @@ func (s *Store) SetWebhook(ctx context.Context, participantID, url, secret strin
 func (s *Store) WebhookFor(ctx context.Context, participantID string) (Webhook, error) {
 	w := Webhook{SecretSet: true}
 	err := s.pool.QueryRow(ctx,
-		`SELECT url, consecutive_failures, disabled_at, last_error, updated_at
+		`SELECT url, authorization_value IS NOT NULL, consecutive_failures, disabled_at, last_error, updated_at
 		 FROM participant_webhooks WHERE participant_id = $1`, participantID,
-	).Scan(&w.URL, &w.ConsecutiveFailures, &w.DisabledAt, &w.LastError, &w.UpdatedAt)
+	).Scan(&w.URL, &w.AuthorizationSet, &w.ConsecutiveFailures, &w.DisabledAt, &w.LastError, &w.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Webhook{}, ErrNotFound
 	}
@@ -128,7 +135,7 @@ func (s *Store) ClaimWebhookJobs(ctx context.Context, limit int, lease time.Dura
 		 FROM due, participant_webhooks w, rooms r, events e
 		 WHERE j.id = due.id AND w.participant_id = j.participant_id AND r.id = j.room_id
 		   AND e.room_id = j.room_id AND e.seq = j.event_seq
-		 RETURNING j.id, j.room_id, r.slug, j.event_seq, j.participant_id, j.reason, j.attempts, w.url, w.secret, e.payload`,
+		 RETURNING j.id, j.room_id, r.slug, j.event_seq, j.participant_id, j.reason, j.attempts, w.url, w.secret, COALESCE(w.authorization_value, ''), e.payload`,
 		limit, lease.String())
 	if err != nil {
 		return nil, err
@@ -137,7 +144,7 @@ func (s *Store) ClaimWebhookJobs(ctx context.Context, limit int, lease time.Dura
 	for rows.Next() {
 		var j WebhookJob
 		var payload json.RawMessage
-		if err := rows.Scan(&j.ID, &j.RoomID, &j.RoomSlug, &j.EventSeq, &j.ParticipantID, &j.Reason, &j.Attempts, &j.URL, &j.Secret, &payload); err != nil {
+		if err := rows.Scan(&j.ID, &j.RoomID, &j.RoomSlug, &j.EventSeq, &j.ParticipantID, &j.Reason, &j.Attempts, &j.URL, &j.Secret, &j.Authorization, &payload); err != nil {
 			rows.Close()
 			return nil, err
 		}

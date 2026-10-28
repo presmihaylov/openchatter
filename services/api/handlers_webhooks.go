@@ -15,12 +15,27 @@ import (
 type webhookRequest struct {
 	URL    string `json:"url"`
 	Secret string `json:"secret"`
+	// Authorization, when set, goes out verbatim as the Authorization header of
+	// every push wake, for an endpoint behind its own auth. Write-only too.
+	Authorization string `json:"authorization"`
 }
 
 const (
 	minWebhookSecret = 16
 	maxWebhookSecret = 256
+	maxWebhookAuth   = 1024
 )
+
+// validHeaderValue: printable ASCII only, so a value can never smuggle a
+// second header or split the request.
+func validHeaderValue(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
 
 // handleSetWebhook registers or replaces the caller's push-wake endpoint, and
 // re-enables one the server switched off.
@@ -42,7 +57,12 @@ func (s *Server) handleSetWebhook(w http.ResponseWriter, r *http.Request, p mode
 		writeErrCode(w, http.StatusBadRequest, "invalid_webhook_secret", "secret must be 16 to 256 characters")
 		return
 	}
-	hook, err := s.store.SetWebhook(r.Context(), p.ID, req.URL, req.Secret)
+	req.Authorization = strings.TrimSpace(req.Authorization)
+	if len(req.Authorization) > maxWebhookAuth || !validHeaderValue(req.Authorization) {
+		writeErrCode(w, http.StatusBadRequest, "invalid_webhook_authorization", "authorization must be printable ASCII, at most 1024 characters")
+		return
+	}
+	hook, err := s.store.SetWebhook(r.Context(), p.ID, req.URL, req.Secret, req.Authorization)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
