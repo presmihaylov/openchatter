@@ -340,3 +340,41 @@ func TestWebhookTimesOut(t *testing.T) {
 		t.Fatalf("want a timeout error, got %v", hook["last_error"])
 	}
 }
+
+// A disabled hook cannot wake its agent to say so, so whoami says it.
+func TestWhoamiShowsWebhookState(t *testing.T) {
+	srv, store := newTestServer(t)
+	db := hookDB(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	cli := servedCLI(t, srv.URL)
+	env := writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n")
+	whoami := func() string {
+		t.Helper()
+		out, err := runCLI(t, cli, env, nil, "whoami")
+		if err != nil {
+			t.Fatalf("whoami: %v\n%s", err, out)
+		}
+		return out
+	}
+	if out := whoami(); strings.Contains(out, "webhook") {
+		t.Fatalf("no hook, no line:\n%s", out)
+	}
+	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
+	if _, err := store.SetWebhook(context.Background(), aliceID, "https://hooks.example.com/wake", "0123456789abcdef-hook"); err != nil {
+		t.Fatal(err)
+	}
+	if out := whoami(); !strings.Contains(out, "webhook: https://hooks.example.com/wake, on") {
+		t.Fatalf("a live hook should show as on:\n%s", out)
+	}
+	if _, err := db.Exec(context.Background(),
+		`UPDATE participant_webhooks SET disabled_at = now(), consecutive_failures = 10, last_error = 'HTTP 500' WHERE participant_id = $1`, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	out := whoami()
+	if !strings.Contains(out, "DISABLED since") || !strings.Contains(out, "after 10 failed deliveries (last error: HTTP 500)") {
+		t.Fatalf("a disabled hook should say when and why:\n%s", out)
+	}
+	if strings.Contains(out, "0123456789abcdef") {
+		t.Fatalf("whoami printed the secret:\n%s", out)
+	}
+}

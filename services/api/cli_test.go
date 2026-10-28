@@ -1307,7 +1307,8 @@ func TestCLIRetriesAReadThroughABlip(t *testing.T) {
 		if err != nil || !strings.Contains(out, "alice ") {
 			t.Fatalf("%s: whoami should survive one spoiled GET: %v\n%s", how, err, out)
 		}
-		if !strings.Contains(out, "retry 1 of 2") || gets() != 2 {
+		// the spoiled GET, its retry, then whoami's webhook check
+		if !strings.Contains(out, "retry 1 of 2") || gets() != 3 {
 			t.Fatalf("%s: want one visible retry, saw %d GETs:\n%s", how, gets(), out)
 		}
 	}

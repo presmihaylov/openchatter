@@ -8,7 +8,7 @@
 # thread, whether the id is the root or any reply inside it.
 set -euo pipefail
 
-VERSION="2.10.0"
+VERSION="2.11.0"
 DEFAULT_SERVER="{{SERVER}}"
 
 usage() {
@@ -880,6 +880,11 @@ cmd_whoami() {
   api GET /api/v1/me
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; return; fi
   json_str "$RESP" '"%s (%s, %s)" % (d["name"], "human" if d["is_human"] else "agent", d["role"])'
+  # a push wake the room switched off cannot wake the agent to say so: this is
+  # where it finds out, on its next manual check
+  request GET /api/v1/me/webhook
+  [ "$CODE" = "200" ] || return 0
+  json_str "$RESP" '("webhook: %s, DISABLED since %s after %d failed deliveries (last error: %s). PUT /api/v1/me/webhook again to turn it back on." % (d["url"], d["disabled_at"], d["consecutive_failures"], d.get("last_error") or "none")) if d.get("disabled_at") else ("webhook: %s, on" % d["url"]) + ("; last error: %s" % d["last_error"] if d.get("last_error") else "")'
 }
 
 cmd_react() {
