@@ -129,7 +129,7 @@ func TestWebhookWakesSignedWithIdsOnly(t *testing.T) {
 	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
 	const hookSecret = "0123456789abcdef-hook"
 	// the receiver lives on loopback, which the API refuses: register it underneath
-	if _, err := store.SetWebhook(context.Background(), aliceID, rcv.srv.URL+"/wake", hookSecret); err != nil {
+	if _, err := store.SetWebhook(context.Background(), aliceID, rcv.srv.URL+"/wake", hookSecret, ""); err != nil {
 		t.Fatal(err)
 	}
 	w := testWorker(store, rcv)
@@ -195,7 +195,7 @@ func TestWebhookDisablesAfterRepeatedFailures(t *testing.T) {
 
 	rcv := newHookReceiver(t)
 	rcv.setStatus(http.StatusInternalServerError)
-	if _, err := store.SetWebhook(context.Background(), helperID, rcv.srv.URL+"/wake", "0123456789abcdef-hook"); err != nil {
+	if _, err := store.SetWebhook(context.Background(), helperID, rcv.srv.URL+"/wake", "0123456789abcdef-hook", ""); err != nil {
 		t.Fatal(err)
 	}
 	w := testWorker(store, rcv)
@@ -278,7 +278,7 @@ func TestWebhookGuardAtDialTime(t *testing.T) {
 	_, alice, bob := setupRoom(t, srv.URL)
 	rcv := newHookReceiver(t)
 	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
-	if _, err := store.SetWebhook(context.Background(), aliceID, rcv.srv.URL+"/wake", "0123456789abcdef-hook"); err != nil {
+	if _, err := store.SetWebhook(context.Background(), aliceID, rcv.srv.URL+"/wake", "0123456789abcdef-hook", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -319,7 +319,7 @@ func TestWebhookTimesOut(t *testing.T) {
 	}))
 	t.Cleanup(slow.Close)
 	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
-	if _, err := store.SetWebhook(context.Background(), aliceID, slow.URL+"/wake", "0123456789abcdef-hook"); err != nil {
+	if _, err := store.SetWebhook(context.Background(), aliceID, slow.URL+"/wake", "0123456789abcdef-hook", ""); err != nil {
 		t.Fatal(err)
 	}
 	w := webhook.NewWorker(store)
@@ -360,7 +360,7 @@ func TestWhoamiShowsWebhookState(t *testing.T) {
 		t.Fatalf("no hook, no line:\n%s", out)
 	}
 	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
-	if _, err := store.SetWebhook(context.Background(), aliceID, "https://hooks.example.com/wake", "0123456789abcdef-hook"); err != nil {
+	if _, err := store.SetWebhook(context.Background(), aliceID, "https://hooks.example.com/wake", "0123456789abcdef-hook", ""); err != nil {
 		t.Fatal(err)
 	}
 	if out := whoami(); !strings.Contains(out, "webhook: https://hooks.example.com/wake, on") {
@@ -376,5 +376,62 @@ func TestWhoamiShowsWebhookState(t *testing.T) {
 	}
 	if strings.Contains(out, "0123456789abcdef") {
 		t.Fatalf("whoami printed the secret:\n%s", out)
+	}
+}
+
+// An endpoint behind its own auth gets the Authorization value its agent
+// registered, verbatim and write-only; a value that could split the request
+// is refused, and a hook without one sends no Authorization header at all.
+func TestWebhookAuthorizationHeader(t *testing.T) {
+	srv, store := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	base := map[string]any{"url": "https://hooks.example.com/wake", "secret": "0123456789abcdef"}
+	with := func(auth string) map[string]any {
+		m := map[string]any{"authorization": auth}
+		for k, v := range base {
+			m[k] = v
+		}
+		return m
+	}
+	alice.must("PUT", "/api/v1/me/webhook", with("Bearer x\r\nX-Evil: 1"), 400)
+	alice.must("PUT", "/api/v1/me/webhook", with("Bearer "+strings.Repeat("k", 1100)), 400)
+	out := alice.must("PUT", "/api/v1/me/webhook", with("Bearer KEY-never-shown"), 200)
+	got := alice.must("GET", "/api/v1/me/webhook", nil, 200)
+	for _, body := range []map[string]any{out, got} {
+		raw, _ := json.Marshal(body)
+		if strings.Contains(string(raw), "KEY-never-shown") || body["authorization_set"] != true {
+			t.Fatalf("the authorization must never come back, authorization_set must: %s", raw)
+		}
+	}
+	if out := alice.must("PUT", "/api/v1/me/webhook", base, 200); out["authorization_set"] != false {
+		t.Fatalf("a PUT without authorization replaces the hook and clears it: %v", out)
+	}
+
+	rcv := newHookReceiver(t)
+	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
+	bobID := bob.must("GET", "/api/v1/me", nil, 200)["id"].(string)
+	if _, err := store.SetWebhook(context.Background(), aliceID, rcv.srv.URL+"/alice", "0123456789abcdef-hook", "Bearer test-key-123"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetWebhook(context.Background(), bobID, rcv.srv.URL+"/bob", "0123456789abcdef-hook", ""); err != nil {
+		t.Fatal(err)
+	}
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice key please"}, 201)
+	alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@bob no key"}, 201)
+	testWorker(store, rcv).Tick(context.Background())
+	calls := rcv.got()
+	if len(calls) != 2 {
+		t.Fatalf("want 2 wakes, got %d", len(calls))
+	}
+	for _, c := range calls {
+		var pl webhook.Payload
+		_ = json.Unmarshal(c.body, &pl)
+		want := ""
+		if pl.ParticipantID == aliceID {
+			want = "Bearer test-key-123"
+		}
+		if got := c.header.Get("Authorization"); got != want {
+			t.Fatalf("participant %s: Authorization %q, want %q", pl.ParticipantID, got, want)
+		}
 	}
 }
