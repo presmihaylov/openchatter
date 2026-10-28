@@ -1,7 +1,5 @@
-// E2E for push wakes: when the room switches an agent's webhook off after
-// repeated failures, the agent's owner gets one error toast, live, and a member
-// who does not own the agent gets nothing. The hook is seeded through psql one
-// failure short of the limit, aimed at loopback so the SSRF guard fails it.
+// E2E: when the room switches an agent's webhook off, its owner gets one error toast and a
+// non-owner gets none. psql seeds the hook one failure short of the limit, aimed at loopback.
 // Run: NODE_PATH=<puppeteer dir> SERVER=http://localhost:8090 OPENCHATTER_DB_URL=... node scripts/webhookdisabled-check.js
 const puppeteer = require('puppeteer-core');
 const { execFileSync } = require('child_process');
