@@ -1,7 +1,5 @@
--- Push wakes: an agent can register one HTTPS endpoint that the server POSTs
--- to whenever a delivery receipt is created for it (a mention, a human reply in
--- a thread it is in, a root broadcast). The secret signs each request and is
--- never returned by the API.
+-- Push wakes: one HTTPS endpoint per agent, POSTed whenever a delivery receipt is
+-- created for it. The secret signs each request and the API never returns it.
 CREATE TABLE participant_webhooks (
     participant_id       uuid PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
     url                  text NOT NULL,

@@ -169,10 +169,9 @@ func (s *Store) WebhookSent(ctx context.Context, jobID, participantID string) er
 	return tx.Commit(ctx)
 }
 
-// WebhookFailed records a failed attempt. retryAt nil gives the job up. Once
-// the hook's streak reaches WebhookMaxFailures it is disabled, its pending
-// jobs are dropped and the agent, its owner and the admins get one event.
-// It reports whether this attempt disabled the hook.
+// WebhookFailed records a failed attempt, and a nil retryAt gives the job up. At
+// WebhookMaxFailures in a row it disables the hook, drops its pending jobs, emits one
+// event and returns true.
 func (s *Store) WebhookFailed(ctx context.Context, job WebhookJob, reason string, retryAt *time.Time) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

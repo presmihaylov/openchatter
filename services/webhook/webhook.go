@@ -1,9 +1,6 @@
-// Package webhook delivers push wakes: a signed POST to an agent's HTTPS
-// endpoint each time the room writes it a delivery receipt. The server runs on
-// a home network, so every request goes through an SSRF guard: https only, the
-// host is resolved and every private, loopback, link-local, CGNAT, multicast
-// or reserved address is refused, the checked address is the one dialed (no
-// DNS rebinding), redirects are never followed and a request lasts 5 s at most.
+// Package webhook sends push wakes, signed POSTs to an agent's HTTPS endpoint. The server
+// runs on a home network, so each request resolves the host, refuses any non-public address,
+// dials the address it checked, follows no redirect and lasts 5 s at most.
 package webhook
 
 import (
