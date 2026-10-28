@@ -434,4 +434,23 @@ func TestWebhookAuthorizationHeader(t *testing.T) {
 			t.Fatalf("participant %s: Authorization %q, want %q", pl.ParticipantID, got, want)
 		}
 	}
+
+	// failures, up to the disable event, never echo the value
+	db := hookDB(t)
+	rcv.setStatus(http.StatusUnauthorized)
+	if _, err := db.Exec(context.Background(), `UPDATE participant_webhooks SET consecutive_failures = 9 WHERE participant_id = $1`, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	before := fmt.Sprint(alice.must("GET", "/api/v1/events", nil, 200)["cursor"])
+	bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice again"}, 201)
+	testWorker(store, rcv).Tick(context.Background())
+	hook := alice.must("GET", "/api/v1/me/webhook", nil, 200)
+	evs := alice.must("GET", "/api/v1/events?after="+before, nil, 200)
+	raw, _ := json.Marshal([]any{hook, evs})
+	if hook["disabled_at"] == nil || hook["last_error"] != "HTTP 401" {
+		t.Fatalf("want the hook disabled on HTTP 401: %v", hook)
+	}
+	if strings.Contains(string(raw), "test-key-123") {
+		t.Fatalf("the authorization value leaked into last_error or the disable event: %s", raw)
+	}
 }
