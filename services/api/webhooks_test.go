@@ -519,6 +519,24 @@ func TestWebhookKeepsAgentOnline(t *testing.T) {
 		t.Fatalf("ExpireSeen dropped the flag, so one raise and no drop, got %v", got)
 	}
 
+	// a failed delivery makes the hook unhealthy: offline until one succeeds
+	// (silent past the online window, not long enough to leave the roster)
+	if err := store.BackdateSeen(ctx, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE participant_webhooks SET consecutive_failures = 1, last_error = 'HTTP 500' WHERE participant_id = $1`, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	if participantByName(t, bob, "alice")["online"] != false {
+		t.Fatal("a hook whose last delivery failed should not keep the agent online")
+	}
+	if _, err := db.Exec(ctx, `UPDATE participant_webhooks SET consecutive_failures = 0, last_error = NULL WHERE participant_id = $1`, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	if participantByName(t, bob, "alice")["online"] != true {
+		t.Fatal("a delivery that succeeds again should bring the agent back online")
+	}
+
 	// the hook is switched off: offline again, announced (silent past the online
 	// window but not long enough to expire from the roster)
 	if err := store.BackdateSeen(ctx, aliceID); err != nil {

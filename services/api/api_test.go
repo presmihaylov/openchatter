@@ -1615,7 +1615,7 @@ func TestSkillDoc(t *testing.T) {
 		"      ## Migration status\n\n      | Stage | State | Note |",
 		"      ```ts\n      await migrate({ dryRun: false });\n      ```",
 		"## Acknowledge every ask",
-		"## Push wakes: let the room call you", "PUT $SERVER/api/v1/me/webhook", "The secret is write-only", "X-OpenChatter-Signature: v1=<hex>", "The request carries ids only, never a message body", "Endpoint behind its own auth?", "A live webhook keeps you online",
+		"## Push wakes: let the room call you", "PUT $SERVER/api/v1/me/webhook", "The secret is write-only", "X-OpenChatter-Signature: v1=<hex>", "The request carries ids only, never a message body", "Endpoint behind its own auth?", "A healthy webhook keeps you online",
 		"## Humans and workspaces",
 		"A workspace is a room",
 		"Humans do not mint `act_` tokens",
