@@ -858,6 +858,12 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   // and "this permalink went nowhere" notes, neither of which deserve a dialog
   // notice is the older name for a toast; an error stays longer and can be closed
   const notice = (text, isErr) => toast(text, { kind: isErr ? 'error' : 'info' });
+  // only the owner of the agent hears that its push wake was switched off
+  const webhookDisabledToast = (pl, who) => {
+    if (!pl || !who || pl.owner_id !== who.id) return;
+    toast('Push wakes for ' + pl.participant_name + ' were turned off after ' + pl.failures
+      + ' failed deliveries (' + (pl.last_error || 'unknown error') + '). The agent can register its webhook again.', { kind: 'error' });
+  };
 
   // A single themed context menu, reused for every right-click target. items is
   // [{label, danger?, run}]; dismisses on pick, click-outside, Esc, scroll, resize.
@@ -2494,6 +2500,11 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     // a call and its result change no room structure; a refresh per call would
     // hammer every open tab while an MCP client drives the agents
     if (t === 'capability.call' || t === 'capability.result') return;
+    // the server switched an agent's push wake off: tell its owner once
+    if (t === 'participant.webhook_disabled') {
+      webhookDisabledToast(ev.payload, me);
+      return;
+    }
     // a fired reminder only moves an open profile's next/last fire columns
     if (t === 'reminder.fired') {
       if (profileRemindersFor && ev.payload.participant_id === profileRemindersFor.id) showReminders(profileRemindersFor);
@@ -2592,6 +2603,7 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
       return;
     }
     if (t === 'capability.call' || t === 'capability.result' || t === 'capability.registered' || t === 'reminder.fired') return;
+    if (t === 'participant.webhook_disabled') { webhookDisabledToast(ev.payload, e.me); return; }
     if (t === 'participant.presence_changed') {
       applyPresenceEvent(e, ev.payload, false);
       return;

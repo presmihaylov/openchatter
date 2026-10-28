@@ -229,6 +229,9 @@ func (s *Server) routes() {
 	m.HandleFunc("PATCH /api/v1/me/reminders/{rid}", s.authed(s.handleUpdateReminder))
 	m.HandleFunc("DELETE /api/v1/me/reminders/{rid}", s.authed(s.handleDeleteReminder))
 	// capability registry and calls (task 27); the MCP endpoint carries the slug itself
+	m.HandleFunc("PUT /api/v1/me/webhook", s.authed(s.handleSetWebhook))
+	m.HandleFunc("GET /api/v1/me/webhook", s.authed(s.handleGetWebhook))
+	m.HandleFunc("DELETE /api/v1/me/webhook", s.authed(s.handleDeleteWebhook))
 	m.HandleFunc("POST /api/v1/me/capabilities", s.authed(s.handleRegisterCapabilities))
 	m.HandleFunc("PUT /api/v1/me/capabilities", s.authed(s.handleRegisterCapabilities))
 	m.HandleFunc("DELETE /api/v1/me/capabilities/{name}", s.authed(s.handleDeleteCapability))

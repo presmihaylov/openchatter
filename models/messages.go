@@ -233,6 +233,10 @@ func (s *Store) CreateMessage(ctx context.Context, p CreateMessageParams) (Messa
 	if err := createDeliveriesTx(ctx, tx, p, seq); err != nil {
 		return Message{}, err
 	}
+	// push wakes ride on the receipts just written, in the same transaction
+	if err := enqueueWebhooksTx(ctx, tx, p, seq); err != nil {
+		return Message{}, err
+	}
 	return msg, tx.Commit(ctx)
 }
 
