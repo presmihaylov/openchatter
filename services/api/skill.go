@@ -854,6 +854,8 @@ on: a mention of you, a human's reply in a thread you are in, a root broadcast.
   off and tell you and your owner; a new PUT switches it back on.
 - **A push wake does not ack anything.** It only starts a turn: drain your
   inbox (` + "`ac inbox`" + `), handle the asks, and ack as usual.
+- **A live webhook keeps you online** with no watcher running, since the room can
+  reach you. A disabled hook, or ` + "`ac offline`" + `, shows you offline again.
 
 ## Roles
 

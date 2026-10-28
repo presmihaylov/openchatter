@@ -103,7 +103,7 @@ func (s *Store) ParticipantByTokenHash(ctx context.Context, hash []byte) (Partic
 	err := s.pool.QueryRow(ctx,
 		`SELECT p.id, p.room_id, p.name, p.avatar, p.avatar_attachment_id, p.description, p.is_human, p.role,
 		        p.owner_id, o.name, o.user_id, ou.username, p.user_id, u.username, p.last_seen_at, p.created_at,
-		        p.last_seen_at > now() - $2::interval AND NOT p.declared_offline AS online, p.declared_offline
+		        (p.last_seen_at > now() - $2::interval OR `+liveHookSQL+`) AND NOT p.declared_offline AS online, p.declared_offline
 		 FROM participants p LEFT JOIN participants o ON o.id = p.owner_id
 		 LEFT JOIN users ou ON ou.id = o.user_id
 		 LEFT JOIN users u ON u.id = p.user_id
@@ -155,7 +155,7 @@ func (s *Store) listParticipants(ctx context.Context, roomID string, id, name, c
 		`SELECT p.id, p.room_id, p.name, p.avatar, p.avatar_attachment_id, p.description, p.is_human, p.role,
 		        p.owner_id, o.name AS owner_name, o.user_id, ou.username, p.user_id, u.username,
 		        p.last_seen_at, p.created_at,
-		        p.last_seen_at > now() - $2::interval AND NOT p.declared_offline AS online, p.declared_offline,
+		        (p.last_seen_at > now() - $2::interval OR `+liveHookSQL+`) AND NOT p.declared_offline AS online, p.declared_offline,
 		        COALESCE(
 		            (SELECT json_agg(json_build_object('tag', t.tag, 'tagged_by', tb.name) ORDER BY t.created_at)
 		             FROM participant_tags t
@@ -171,7 +171,7 @@ func (s *Store) listParticipants(ctx context.Context, roomID string, id, name, c
 		   AND ($4::text IS NULL OR p.name = $4)
 		   AND ($5::uuid IS NULL OR p.id IN
 		        (SELECT participant_id FROM channel_members WHERE channel_id = $5))
-		   AND NOT ($6::boolean AND NOT p.is_human AND p.last_seen_at < now() - $7::interval)
+		   AND NOT ($6::boolean AND NOT p.is_human AND p.last_seen_at < now() - $7::interval AND NOT `+liveHookSQL+`)
 		 ORDER BY p.created_at ASC`,
 		roomID, OnlineWindow.String(), id, name, channelID, roster, AgentExpireAfter.String())
 	if err != nil {
@@ -661,13 +661,14 @@ func (s *Store) ExpireSeen(ctx context.Context, id string) error {
 	return err
 }
 
-// SweepPresence announces the online->offline transition for participants whose
-// heartbeat stopped: still flagged online but last seen outside the window.
-// Meant to run on a ticker. Returns how many transitions it announced.
+// SweepPresence announces presence transitions: offline for a stopped heartbeat
+// (unless a live push webhook still reaches the agent), online for an agent whose
+// webhook is live. Meant to run on a ticker. Returns how many it announced.
 func (s *Store) SweepPresence(ctx context.Context) (int, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT DISTINCT room_id FROM participants
-		 WHERE presence_online AND last_seen_at < now() - $1::interval`,
+		`SELECT DISTINCT p.room_id FROM participants p
+		 WHERE (p.presence_online AND p.last_seen_at < now() - $1::interval AND NOT `+liveHookSQL+`)
+		    OR (NOT p.presence_online AND NOT p.declared_offline AND NOT p.revoked AND `+liveHookSQL+`)`,
 		OnlineWindow.String())
 	if err != nil {
 		return 0, err
@@ -706,35 +707,31 @@ func (s *Store) sweepRoomPresence(ctx context.Context, roomID string) (int, erro
 	if err := lockRoomEvents(ctx, tx, roomID); err != nil {
 		return 0, err
 	}
-	rows, err := tx.Query(ctx,
-		`UPDATE participants SET presence_online = FALSE
-		 WHERE room_id = $1 AND presence_online AND last_seen_at < now() - $2::interval
-		 RETURNING id, name`,
-		roomID, OnlineWindow.String())
+	// a live push webhook keeps an agent reachable without a heartbeat: it never
+	// drops offline here, and one that was offline comes back online
+	dropped, err := presenceFlips(ctx, tx, false,
+		`UPDATE participants p SET presence_online = FALSE
+		 WHERE p.room_id = $1 AND p.presence_online AND p.last_seen_at < now() - $2::interval AND NOT `+liveHookSQL+`
+		 RETURNING p.id, p.name`, roomID, OnlineWindow.String())
 	if err != nil {
 		return 0, err
 	}
-	type gone struct{ id, name string }
-	dropped := []gone{}
-	for rows.Next() {
-		var g gone
-		if err := rows.Scan(&g.id, &g.name); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		dropped = append(dropped, g)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	raised, err := presenceFlips(ctx, tx, true,
+		`UPDATE participants p SET presence_online = TRUE
+		 WHERE p.room_id = $1 AND NOT p.presence_online AND NOT p.declared_offline AND NOT p.revoked AND `+liveHookSQL+`
+		 RETURNING p.id, p.name`, roomID)
+	if err != nil {
 		return 0, err
 	}
-	for _, g := range dropped {
-		payload, _ := json.Marshal(map[string]any{"participant_id": g.id, "name": g.name, "online": false})
-		if err := appendEventTx(ctx, tx, roomID, "participant.presence_changed", payload); err != nil {
-			return 0, err
+	for _, f := range [][]presenceFlip{dropped, raised} {
+		for _, g := range f {
+			payload, _ := json.Marshal(map[string]any{"participant_id": g.id, "name": g.name, "online": g.online})
+			if err := appendEventTx(ctx, tx, roomID, "participant.presence_changed", payload); err != nil {
+				return 0, err
+			}
 		}
 	}
-	return len(dropped), tx.Commit(ctx)
+	return len(dropped) + len(raised), tx.Commit(ctx)
 }
 
 func (s *Store) AddTag(ctx context.Context, roomID, participantID, tag, taggedBy string) error {
@@ -819,4 +816,28 @@ func (s *Store) SetNotifyPrefs(ctx context.Context, roomID, id string, enabled, 
 		return np, ErrNotFound
 	}
 	return np, err
+}
+
+type presenceFlip struct {
+	id, name string
+	online   bool
+}
+
+// presenceFlips runs one presence UPDATE ... RETURNING id, name that sets
+// presence_online to online, and reports the rows it flipped.
+func presenceFlips(ctx context.Context, tx pgx.Tx, online bool, sql string, args ...any) ([]presenceFlip, error) {
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []presenceFlip{}
+	for rows.Next() {
+		f := presenceFlip{online: online}
+		if err := rows.Scan(&f.id, &f.name); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }

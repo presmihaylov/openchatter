@@ -13,6 +13,10 @@ import (
 // agent's push wake was switched off after too many failed deliveries.
 const WebhookDisabledEvent = "participant.webhook_disabled"
 
+// liveHookSQL is true for a participant row p with an enabled push webhook: the
+// room can wake it without a heartbeat, so presence counts it as online.
+const liveHookSQL = `EXISTS (SELECT 1 FROM participant_webhooks lw WHERE lw.participant_id = p.id AND lw.disabled_at IS NULL)`
+
 // WebhookMaxFailures is how many failed attempts in a row disable a hook.
 const WebhookMaxFailures = 10
 

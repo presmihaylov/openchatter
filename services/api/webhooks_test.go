@@ -454,3 +454,95 @@ func TestWebhookAuthorizationHeader(t *testing.T) {
 		t.Fatalf("the authorization value leaked into last_error or the disable event: %s", raw)
 	}
 }
+
+// An agent the room can wake through a live push webhook counts as online
+// without a heartbeat: it shows online, the sweep never drops it and raises it
+// if it was offline, and it stays on the roster. A disabled hook, or a
+// declared offline, takes it offline again.
+func TestWebhookKeepsAgentOnline(t *testing.T) {
+	srv, store := newTestServer(t)
+	db := hookDB(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	ctx := context.Background()
+	aliceID := alice.must("GET", "/api/v1/me", nil, 200)["id"].(string)
+	presenceEvents := func(after string) []bool {
+		var out []bool
+		for _, e := range bob.must("GET", "/api/v1/events?after="+after, nil, 200)["events"].([]any) {
+			ev := e.(map[string]any)
+			pl := ev["payload"].(map[string]any)
+			if ev["type"] == "participant.presence_changed" && pl["participant_id"] == aliceID {
+				out = append(out, pl["online"].(bool))
+			}
+		}
+		return out
+	}
+	sweep := func() {
+		t.Helper()
+		if _, err := store.SweepPresence(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// no hook: a stopped heartbeat goes offline, as before
+	if err := store.BackdateSeen(ctx, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	sweep()
+	if participantByName(t, bob, "alice")["online"] != false {
+		t.Fatal("a silent agent without a hook should be offline")
+	}
+
+	// a live hook: online at once, and the sweep announces it
+	cur := fmt.Sprint(bob.must("GET", "/api/v1/events", nil, 200)["cursor"])
+	if _, err := store.SetWebhook(ctx, aliceID, "https://hooks.example.com/wake", "0123456789abcdef-hook", ""); err != nil {
+		t.Fatal(err)
+	}
+	if participantByName(t, bob, "alice")["online"] != true {
+		t.Fatal("an agent with a live hook should show online")
+	}
+	sweep()
+	if got := presenceEvents(cur); len(got) != 1 || !got[0] {
+		t.Fatalf("the sweep should announce alice online once, got %v", got)
+	}
+
+	// still silent, still online, never swept off and never expired from the roster
+	cur = fmt.Sprint(bob.must("GET", "/api/v1/events", nil, 200)["cursor"])
+	if err := store.ExpireSeen(ctx, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	sweep()
+	sweep()
+	if p := participantByName(t, bob, "alice"); p["online"] != true {
+		t.Fatalf("a live hook keeps a silent agent online and on the roster: %v", p)
+	}
+	if got := presenceEvents(cur); len(got) != 1 || !got[0] {
+		t.Fatalf("ExpireSeen dropped the flag, so one raise and no drop, got %v", got)
+	}
+
+	// the hook is switched off: offline again, announced (silent past the online
+	// window but not long enough to expire from the roster)
+	if err := store.BackdateSeen(ctx, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	cur = fmt.Sprint(bob.must("GET", "/api/v1/events", nil, 200)["cursor"])
+	if _, err := db.Exec(ctx, `UPDATE participant_webhooks SET disabled_at = now() WHERE participant_id = $1`, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	if participantByName(t, bob, "alice")["online"] != false {
+		t.Fatal("a disabled hook should not keep the agent online")
+	}
+	sweep()
+	if got := presenceEvents(cur); len(got) != 1 || got[0] {
+		t.Fatalf("the sweep should announce alice offline once, got %v", got)
+	}
+
+	// re-enabled, but the agent declared itself offline: offline wins
+	if _, err := store.SetWebhook(ctx, aliceID, "https://hooks.example.com/wake", "0123456789abcdef-hook", ""); err != nil {
+		t.Fatal(err)
+	}
+	alice.must("POST", "/api/v1/me/presence", map[string]any{"status": "offline"}, 200)
+	sweep()
+	if participantByName(t, bob, "alice")["online"] != false {
+		t.Fatal("a declared offline should beat a live hook")
+	}
+}
