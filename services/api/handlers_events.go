@@ -212,6 +212,10 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 		if e.Type == reminderFiredEvent && !reminderVisible(e, p) {
 			continue
 		}
+		// a disabled webhook is private the same way
+		if e.Type == models.WebhookDisabledEvent && !agentPrivate(e, p) {
+			continue
+		}
 		if len(types) > 0 && !types[e.Type] {
 			continue
 		}
@@ -236,6 +240,13 @@ func (s *Server) filterEvents(ctx context.Context, events []models.Event, p mode
 		if e.Type == "message.ack" {
 			var ak models.AckEvent
 			if err := json.Unmarshal(e.Payload, &ak); err == nil && ak.AuthorID == p.ID && ak.ParticipantID != p.ID {
+				kept = append(kept, e)
+			}
+			continue
+		}
+		// a disabled webhook is news to the agent and its owner
+		if e.Type == models.WebhookDisabledEvent {
+			if webhookDisabledRelevant(e, p) {
 				kept = append(kept, e)
 			}
 			continue

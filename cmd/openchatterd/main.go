@@ -23,6 +23,7 @@ import (
 	"github.com/presmihaylov/openchatter/services/api"
 	"github.com/presmihaylov/openchatter/services/auth"
 	"github.com/presmihaylov/openchatter/services/embed"
+	"github.com/presmihaylov/openchatter/services/webhook"
 )
 
 func main() {
@@ -142,6 +143,10 @@ func run() error {
 		SessionTTL:          sessionTTL,
 		RegistrationEnabled: registration,
 	})
+
+	// push wakes (participant webhooks): signed POSTs, queued in the message
+	// transaction and sent here, behind the SSRF guard
+	go webhook.NewWorker(store).Run(ctx)
 
 	// avatars and logos uploaded before resized copies existed get them once;
 	// a later boot finds nothing to do
