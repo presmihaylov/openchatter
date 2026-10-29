@@ -476,3 +476,21 @@ func TestMCPSetupScriptLeavesUneditableCodexConfigs(t *testing.T) {
 		}
 	}
 }
+
+// Tagging a room member outside a public channel adds them, and the result says so.
+func TestMCPTagAddsMemberToPublicChannel(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	alice.must("POST", "/api/v1/channels", map[string]any{"name": "scratch"}, 201)
+	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"))
+	text := s.mustCall("post_message", map[string]any{"channel": "scratch", "text": "@bob please look"})
+	if !strings.Contains(text, "Tagged: @bob") || !strings.Contains(text, "Added @bob to #scratch") || strings.Contains(text, "Note:") {
+		t.Fatalf("post_message: %s", text)
+	}
+	// a private channel never opens by a tag, and nobody is claimed as woken
+	alice.must("POST", "/api/v1/channels", map[string]any{"name": "secret", "private": true}, 201)
+	text = s.mustCall("post_message", map[string]any{"channel": "secret", "text": "@bob psst"})
+	if strings.Contains(text, "Tagged: @bob") || !strings.Contains(text, "Note: @bob is not a member of private #secret") {
+		t.Fatalf("private post_message: %s", text)
+	}
+}

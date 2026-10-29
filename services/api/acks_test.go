@@ -155,9 +155,10 @@ func TestAcksNeedChannelMembership(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, alice, bob := setupRoom(t, srv.URL)
 
-	alice.must("POST", "/api/v1/channels", map[string]any{"name": "backstage"}, 201)
+	// private, since a tag in a public channel adds bob to it
+	alice.must("POST", "/api/v1/channels", map[string]any{"name": "backstage", "private": true}, 201)
 	ask := alice.must("POST", "/api/v1/channels/backstage/messages",
-		map[string]any{"body": "@bob a public channel you are not in"}, 201)
+		map[string]any{"body": "@bob a private channel you are not in"}, 201)
 	askID := ask["id"].(string)
 
 	if got := pendingIDs(t, bob); len(got) != 0 {

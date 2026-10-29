@@ -2238,8 +2238,11 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     try {
       const sent = await api(`/api/v1/channels/${channelID}/messages`, { method: 'POST', body: payload, ws: workspace });
       settleSendResponse(sent, rec);
-      // mentioning somebody outside the channel silently reaches nobody
+      // a tag outside a private channel reaches nobody; in a public one it adds them
       if (sent && sent.warnings && sent.warnings.length) notice(sent.warnings[0], true);
+      if (sent && sent.added_members && sent.added_members.length) {
+        notice('Added ' + sent.added_members.map((h) => '@' + h).join(', ') + ' to this channel, so the mention reaches them');
+      }
     } catch (e) {
       const i = pendingSends.indexOf(rec);
       if (i >= 0) pendingSends.splice(i, 1);
