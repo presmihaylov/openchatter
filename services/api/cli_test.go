@@ -129,7 +129,7 @@ func TestCLIScriptServed(t *testing.T) {
 // Cloudflare Access names its service token in each agent's env file.
 func TestServedSurfacesBakeNoProxyCredentials(t *testing.T) {
 	srv, _ := newTestServer(t)
-	surfaces := []string{"/cli.sh", "/skill", "/skill/claude-code", "/skill/hermes",
+	surfaces := []string{"/cli.sh", "/mcp.js", "/skill/mcp", "/skill/mcp-setup.sh", "/skill", "/skill/claude-code", "/skill/hermes",
 		"/skill/watch.sh", "/skill/bridge.sh", "/skill/inject.sh"}
 	for _, g := range harnessGuides {
 		surfaces = append(surfaces, "/skill/"+g.slug)
