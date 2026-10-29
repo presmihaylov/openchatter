@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const DEFAULT_SERVER = '{{SERVER}}';
 
 // ---------- config ----------
@@ -163,6 +163,13 @@ function mentionHelp(e) {
     + '. Fix the handle and call again. To name someone who is not in the room without tagging, write it in `backticks`.';
 }
 
+// tags reports whether text tags handle the way the server reads it: outside code
+function tags(text, handle) {
+  const prose = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ');
+  const esc = handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('(^|[^\\w@])@' + esc + '(?![\\w-])').test(prose);
+}
+
 // a bare - or + at line start is a Markdown bullet, so an unfenced diff renders mangled
 function looksLikeUnfencedDiff(body) {
   if (body.includes('```')) return false;
@@ -191,14 +198,11 @@ async function post(channelId, text, rootId) {
     throw e;
   }
 }
-// asker: the agent whose message this answers; an untagged answer never reaches them
-function postedText(verb, m, chName, asker) {
+function postedText(verb, m, chName) {
   // a tag outside a private channel reaches nobody; the server says so in a warning
   const missed = (h) => (m.warnings || []).some((w) => w.startsWith('@' + h + ' is not a member'));
   const woken = (m.mentions || []).filter((h) => !missed(h));
-  let tagged = woken.length ? ' Tagged: ' + woken.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was woken by a tag.';
-  // only retag advice for a missing tag: a tag that missed has its own warning below
-  if (asker && !(m.mentions || []).includes(asker)) tagged += ' @' + asker + ' asked this and was not tagged, so they will not see it; reply again tagging @' + asker + ' to wake them.';
+  const tagged = woken.length ? ' Tagged: ' + woken.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was woken by a tag.';
   const added = (m.added_members || []).length ? ' Added ' + m.added_members.map((h) => '@' + h).join(', ') + ' to ' + chName + ' so the tag reaches them.' : '';
   const warn = (m.warnings || []).length ? '\nNote: ' + m.warnings.join(' ') : '';
   return verb + ' in ' + chName + '. message_id: ' + m.id + ', thread: ' + (m.reply_to || m.thread_root_id || m.id) + '.' + tagged + added + warn;
@@ -214,7 +218,7 @@ const tools = [
   {
     name: 'reply',
     annotations: POST,
-    description: 'Reply in the thread of a message. Use this to answer anyone who tagged you, and for every status, result or follow-up on an existing topic. message_id can be the thread root or any reply in it; the reply always lands in that thread.',
+    description: 'Reply in the thread of a message. Use this to answer anyone who tagged you, and for every status, result or follow-up on an existing topic. message_id can be the thread root or any reply in it; the reply always lands in that thread. Answering an agent that tagged you? Tag it back with @handle: an agent only hears replies that tag it.',
     inputSchema: { type: 'object', properties: {
       message_id: { type: 'string', description: 'Id of the message you are answering (shown as [id] in read_thread / read_channel and in your wake line).' },
       text: { type: 'string', description: TEXT_DESC },
@@ -223,9 +227,14 @@ const tools = [
       const m = await messageById(a.message_id);
       const root = m.thread_root_id || m.id;
       const self = await whoami();
-      const asker = m.author_kind === 'agent' && m.author_name !== self.name ? m.author_name : '';
+      // an agent that tagged you only hears an answer that tags it back; refusing
+      // beats advising a retry, which can only add a second post
+      const asked = m.author_kind === 'agent' && m.author_name !== self.name && (m.mentions || []).includes(self.name);
+      if (asked && !tags(a.text, m.author_name)) {
+        throw new RoomError('Not posted: @' + m.author_name + ' asked you this and only hears a reply that tags them. Add @' + m.author_name + ' to the text and call reply again.', 400);
+      }
       const out = await post(m.channel_id, a.text, root);
-      return ok(postedText('Replied', out, await channelName(m.channel_id), asker));
+      return ok(postedText('Replied', out, await channelName(m.channel_id)));
     },
   },
   {
