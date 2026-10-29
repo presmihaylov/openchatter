@@ -18,6 +18,26 @@ type CreateMessageParams struct {
 	IsBroadcast   bool
 	AttachmentIDs []string
 	MentionIDs    []string
+	// Outsiders are mentioned room members who were not in the channel when the
+	// request looked; a public channel takes them in, in this same transaction
+	Outsiders []Member
+	ActorName string
+}
+
+// Member names a participant by id and handle.
+type Member struct {
+	ID   string
+	Name string
+}
+
+// PostResult is a created message and what its tags did to the channel.
+type PostResult struct {
+	Message Message
+	// Added are the outsiders this post made channel members
+	Added []string
+	// Private is true when the channel was private at commit, so no outsider
+	// was added and their tags reach nobody
+	Private bool
 }
 
 // messageColumns/messageFrom hydrate messages with author name, attachments,
@@ -99,6 +119,21 @@ func scanMessage(row pgx.Row) (Message, error) {
 }
 
 func (s *Store) CreateMessage(ctx context.Context, p CreateMessageParams) (Message, error) {
+	res, err := s.PostMessage(ctx, p)
+	return res.Message, err
+}
+
+// PostMessage creates the message, its receipts and, in a public channel, the
+// memberships its tags imply, all in one transaction: a failed send changes
+// nothing, and privacy is read under the room lock that SetChannelPrivate takes.
+func (s *Store) PostMessage(ctx context.Context, p CreateMessageParams) (PostResult, error) {
+	var res PostResult
+	msg, err := s.postMessage(ctx, p, &res)
+	res.Message = msg
+	return res, err
+}
+
+func (s *Store) postMessage(ctx context.Context, p CreateMessageParams, res *PostResult) (Message, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Message{}, err
@@ -115,14 +150,29 @@ func (s *Store) CreateMessage(ctx context.Context, p CreateMessageParams) (Messa
 	// archived check inside the tx so a concurrent archive can't race past
 	// the handler's pre-check; FOR SHARE blocks the archiver until we commit
 	var archived bool
+	var name string
 	err = tx.QueryRow(ctx,
-		`SELECT archived FROM channels WHERE id = $1 AND room_id = $2 FOR SHARE`,
-		p.ChannelID, p.RoomID).Scan(&archived)
+		`SELECT archived, private, name FROM channels WHERE id = $1 AND room_id = $2 FOR SHARE`,
+		p.ChannelID, p.RoomID).Scan(&archived, &res.Private, &name)
 	if err != nil {
 		return Message{}, mapRowErr(err)
 	}
 	if archived {
 		return Message{}, ErrArchived
+	}
+	// before the message, so the "was added" entries precede it and its
+	// receipts reach the new members
+	for _, o := range p.Outsiders {
+		if res.Private {
+			break
+		}
+		added, err := setMembershipTx(ctx, tx, p.RoomID, p.ChannelID, o.ID, name, p.AuthorID, p.ActorName, true)
+		if err != nil {
+			return Message{}, err
+		}
+		if added {
+			res.Added = append(res.Added, o.Name)
+		}
 	}
 
 	// system timeline entries take no replies

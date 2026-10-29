@@ -2560,12 +2560,44 @@ func TestMentionValidation(t *testing.T) {
 	}
 
 	// 6. bob is a room member but not in alice's private channel: warn, do not fail
-	ch := alice.must("POST", "/api/v1/channels", map[string]any{"name": "alice-only"}, 201)
+	ch := alice.must("POST", "/api/v1/channels", map[string]any{"name": "alice-only", "private": true}, 201)
 	chID := ch["id"].(string)
 	warned := alice.must("POST", "/api/v1/channels/"+chID+"/messages", map[string]any{"body": "hi @bob"}, 201)
 	warnings, _ := warned["warnings"].([]any)
-	if len(warnings) != 1 || !strings.Contains(warnings[0].(string), "@bob") {
-		t.Fatalf("want a not-in-channel warning, got %v", warned["warnings"])
+	if len(warnings) != 1 || !strings.Contains(warnings[0].(string), "@bob") || warned["added_members"] != nil {
+		t.Fatalf("want a not-in-channel warning and nobody added, got %v", warned)
+	}
+
+	// 6b. in a public channel the tag adds bob instead, and the mention reaches him
+	pub := alice.must("POST", "/api/v1/channels", map[string]any{"name": "alice-public"}, 201)
+	added := alice.must("POST", "/api/v1/channels/"+pub["id"].(string)+"/messages", map[string]any{"body": "hi @bob, join us"}, 201)
+	if a, _ := added["added_members"].([]any); len(a) != 1 || a[0] != "bob" || added["warnings"] != nil {
+		t.Fatalf("want bob added with no warning, got %v", added)
+	}
+	pending := bob.must("GET", "/api/v1/me/pending-acks", nil, 200)["pending"].([]any)
+	if !strings.Contains(fmt.Sprint(pending), added["id"].(string)) {
+		t.Fatalf("the tag did not reach bob: %v", pending)
+	}
+	// a rejected send adds nobody: the join commits with the message or not at all
+	pub2 := alice.must("POST", "/api/v1/channels", map[string]any{"name": "alice-public-2"}, 201)
+	alice.must("POST", "/api/v1/channels/"+pub2["id"].(string)+"/messages", map[string]any{
+		"body": "@bob see file", "attachment_ids": []string{"00000000-0000-4000-8000-000000000001"}}, 404)
+	scoped2 := alice.must("GET", "/api/v1/members?channel="+pub2["id"].(string), nil, 200)
+	for _, m := range scoped2["members"].([]any) {
+		if mm := m.(map[string]any); mm["handle"] == "bob" && mm["in_channel"] == true {
+			t.Fatal("a rejected send added bob to the channel")
+		}
+	}
+	if hist := alice.must("GET", "/api/v1/channels/"+pub2["id"].(string)+"/messages", nil, 200)["messages"].([]any); len(hist) != 0 {
+		for _, h := range hist {
+			if strings.Contains(h.(map[string]any)["body"].(string), "added") {
+				t.Fatalf("a rejected send left a join entry: %v", hist)
+			}
+		}
+	}
+	again := alice.must("POST", "/api/v1/channels/"+pub["id"].(string)+"/messages", map[string]any{"body": "@bob again"}, 201)
+	if again["added_members"] != nil {
+		t.Fatalf("a member is not added twice: %v", again)
 	}
 
 	// 7. ?channel= flags who would actually receive a mention there

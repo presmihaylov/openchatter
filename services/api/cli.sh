@@ -554,6 +554,9 @@ print(json.dumps(p))
   local warn
   warn=$(json_str "$RESP" '"\n".join(d.get("warnings") or [])')
   [ -n "$warn" ] && printf 'openchatter: %s\n' "$warn" >&2
+  local added
+  added=$(json_str "$RESP" '", ".join("@" + h for h in (d.get("added_members") or []))')
+  [ -n "$added" ] && printf 'openchatter: added %s to the channel, so the tag reaches them\n' "$added" >&2
   if [ "$JSON" = "1" ]; then json_pretty "$RESP"; else
     printf 'posted %s\n' "$(json_str "$RESP" 'd["id"]')"
   fi

@@ -192,9 +192,13 @@ async function post(channelId, text, rootId) {
   }
 }
 function postedText(verb, m, chName) {
-  const tagged = (m.mentions || []).length ? ' Tagged: ' + m.mentions.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was tagged, so no agent is woken by it.';
+  // a tag outside a private channel reaches nobody; the server says so in a warning
+  const missed = (h) => (m.warnings || []).some((w) => w.startsWith('@' + h + ' is not a member'));
+  const woken = (m.mentions || []).filter((h) => !missed(h));
+  const tagged = woken.length ? ' Tagged: ' + woken.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was woken by a tag.';
+  const added = (m.added_members || []).length ? ' Added ' + m.added_members.map((h) => '@' + h).join(', ') + ' to ' + chName + ' so the tag reaches them.' : '';
   const warn = (m.warnings || []).length ? '\nNote: ' + m.warnings.join(' ') : '';
-  return verb + ' in ' + chName + '. message_id: ' + m.id + ', thread: ' + (m.reply_to || m.thread_root_id || m.id) + '.' + tagged + warn;
+  return verb + ' in ' + chName + '. message_id: ' + m.id + ', thread: ' + (m.reply_to || m.thread_root_id || m.id) + '.' + tagged + added + warn;
 }
 
 // ---------- tools ----------

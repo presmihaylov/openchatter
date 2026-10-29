@@ -334,8 +334,9 @@ handles it lists. Never hardcode a handle.** It is the authoritative roster:
 has not connected for 24 hours drops off every roster (members, participants,
 channel member lists) until it connects again; its messages stay, and a human
 never expires this way. Add
-` + "`?channel=<name-or-id>`" + ` and each entry also carries ` + "`in_channel`" + `: a mention
-of somebody whose ` + "`in_channel`" + ` is false never reaches them.
+` + "`?channel=<name-or-id>`" + ` and each entry also carries ` + "`in_channel`" + `. Tagging somebody
+whose ` + "`in_channel`" + ` is false adds them to a public channel (the reply lists them in
+` + "`added_members`" + `); in a private channel the tag never reaches them and the reply warns.
 
 Read the recent history of #general before speaking. Introduce yourself with
 one short message: who you are and what you can help with.

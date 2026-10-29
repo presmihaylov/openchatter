@@ -51,7 +51,7 @@ const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
   assert(bad.data.members.length === 7, 'the 422 must carry the roster');
 
   // 3. an out-of-channel mention posts, with a warning
-  const priv = await api('/api/v1/channels', { method: 'POST', token: bot.token, body: { name: 'botonly' } });
+  const priv = await api('/api/v1/channels', { method: 'POST', token: bot.token, body: { name: 'botonly', private: true } });
   const warned = await api('/api/v1/channels/' + priv.id + '/messages', {
     method: 'POST', token: bot.token, body: { body: 'hi @viewer' },
   });
@@ -76,20 +76,30 @@ const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
     .some((m) => m.textContent.includes('ghost-branch')), { timeout: 8000 });
   assert(!alerted, 'the UI blocked a literal @text: ' + alerted);
 
-  // 5. the human mentioning an out-of-channel member sees the warning pill
-  await api('/api/v1/channels', { method: 'POST', token: viewer.token, body: { name: 'viewer-only' } });
-  await page.reload({ waitUntil: 'networkidle2' });
-  await page.waitForSelector('#chat-view:not(.hidden)', { timeout: 8000 });
-  await page.evaluate(() => [...document.querySelectorAll('#channel-list li')]
-    .find((li) => li.textContent.includes('viewer-only')).click());
-  await page.waitForFunction(() => document.querySelector('#channel-title').textContent.includes('viewer-only'), { timeout: 8000 });
-  // the trailing space dismisses the mention popup, so Enter sends instead of
-  // picking a suggestion
-  await page.type('#composer-input', 'hey @mentionbot ');
-  await page.keyboard.press('Escape');
-  await page.keyboard.press('Enter');
+  // 5. the human tagging an out-of-channel member: a public channel adds them
+  //    with an info toast, a private one warns and adds nobody
+  const sendIn = async (name, text) => {
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForSelector('#chat-view:not(.hidden)', { timeout: 8000 });
+    await page.evaluate((n) => [...document.querySelectorAll('#channel-list li')]
+      .find((li) => li.textContent.includes(n)).click(), name);
+    await page.waitForFunction((n) => document.querySelector('#channel-title').textContent.includes(n), { timeout: 8000 }, name);
+    // the trailing space dismisses the mention popup, so Enter sends instead of
+    // picking a suggestion
+    await page.type('#composer-input', text);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Enter');
+  };
+  const pub = await api('/api/v1/channels', { method: 'POST', token: viewer.token, body: { name: 'viewer-only' } });
+  await sendIn('viewer-only', 'hey @mentionbot ');
   await page.waitForFunction(() => [...document.querySelectorAll('#toasts .toast-text')]
-    .some((n) => /mentionbot/.test(n.textContent)), { timeout: 8000 });
+    .some((n) => /Added @mentionbot/.test(n.textContent)), { timeout: 8000 });
+  const pubMembers = await api('/api/v1/members?channel=' + pub.id, { token: viewer.token });
+  assert(pubMembers.members.find((m) => m.handle === 'mentionbot').in_channel, 'the tag did not add mentionbot');
+  await api('/api/v1/channels', { method: 'POST', token: viewer.token, body: { name: 'viewer-secret', private: true } });
+  await sendIn('viewer-secret', 'psst @mentionbot ');
+  await page.waitForFunction(() => [...document.querySelectorAll('#toasts .toast-text')]
+    .some((n) => /mentionbot is not a member of private/.test(n.textContent)), { timeout: 8000 });
 
   await page.screenshot({ path: (process.env.OUT || 'tmp') + '/mention-warning.png' });
 
