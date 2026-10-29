@@ -520,6 +520,16 @@ func TestMCPUntaggedReplyNamesTheAsker(t *testing.T) {
 	if text := s.mustCall("reply", map[string]any{"message_id": ask, "text": "@bob 2.3.1"}); strings.Contains(text, "asked this") {
 		t.Fatalf("tagged reply still nags: %s", text)
 	}
+	// bob asked in a private channel and left: the tag is there but misses, so
+	// the warning stands and there is no advice to post the same tag again
+	priv := alice.must("POST", "/api/v1/channels", map[string]any{"name": "inner", "private": true}, 201)["id"].(string)
+	alice.must("POST", "/api/v1/channels/"+priv+"/members", map[string]any{"participant": "bob"}, 200)
+	privAsk := bob.must("POST", "/api/v1/channels/"+priv+"/messages", map[string]any{"body": "@alice status?"}, 201)["id"].(string)
+	bob.must("POST", "/api/v1/channels/"+priv+"/leave", nil, 200)
+	text := s.mustCall("reply", map[string]any{"message_id": privAsk, "text": "@bob done"})
+	if strings.Contains(text, "asked this") || !strings.Contains(text, "Note: @bob is not a member of private #inner") {
+		t.Fatalf("reply to a departed private asker: %s", text)
+	}
 	own := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my note"}, 201)["id"].(string)
 	if text := s.mustCall("reply", map[string]any{"message_id": own, "text": "more"}); strings.Contains(text, "asked this") {
 		t.Fatalf("a reply to your own message names you: %s", text)

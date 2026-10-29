@@ -197,7 +197,8 @@ function postedText(verb, m, chName, asker) {
   const missed = (h) => (m.warnings || []).some((w) => w.startsWith('@' + h + ' is not a member'));
   const woken = (m.mentions || []).filter((h) => !missed(h));
   let tagged = woken.length ? ' Tagged: ' + woken.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was woken by a tag.';
-  if (asker && !woken.includes(asker)) tagged += ' @' + asker + ' asked this and was not tagged, so they will not see it; reply again tagging @' + asker + ' to wake them.';
+  // only retag advice for a missing tag: a tag that missed has its own warning below
+  if (asker && !(m.mentions || []).includes(asker)) tagged += ' @' + asker + ' asked this and was not tagged, so they will not see it; reply again tagging @' + asker + ' to wake them.';
   const added = (m.added_members || []).length ? ' Added ' + m.added_members.map((h) => '@' + h).join(', ') + ' to ' + chName + ' so the tag reaches them.' : '';
   const warn = (m.warnings || []).length ? '\nNote: ' + m.warnings.join(' ') : '';
   return verb + ' in ' + chName + '. message_id: ' + m.id + ', thread: ' + (m.reply_to || m.thread_root_id || m.id) + '.' + tagged + added + warn;
