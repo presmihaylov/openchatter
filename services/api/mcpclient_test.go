@@ -432,7 +432,7 @@ func TestMCPReplySucceedsWhenTheLookupAfterItFails(t *testing.T) {
 	}))
 	t.Cleanup(front.Close)
 	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+"\n"))
-	text := s.mustCall("reply", map[string]any{"message_id": root, "text": "all green"})
+	text := s.mustCall("reply", map[string]any{"message_id": root, "text": "@bob all green"})
 	if !strings.Contains(text, "message_id: ") || !strings.Contains(text, "thread: "+root) {
 		t.Fatalf("reply after a failed lookup: %s", text)
 	}
@@ -507,32 +507,54 @@ func TestMCPTagAddsMemberToPublicChannel(t *testing.T) {
 	}
 }
 
-// An untagged reply to an agent's ask reaches nobody, so the result names the
-// asker and says how to wake them; a tagged one, or an answer to a human, does not.
-func TestMCPUntaggedReplyNamesTheAsker(t *testing.T) {
+// An agent that tagged you only hears an answer that tags it back. An untagged
+// reply to its ask is refused and posts nothing, since advice to retry led cold
+// agents to post the answer twice.
+func TestMCPRefusesUntaggedReplyToAnAgentsAsk(t *testing.T) {
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
 	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"))
+	threadLen := func(root string) int {
+		return len(alice.must("GET", "/api/v1/threads/"+root, nil, 200)["messages"].([]any))
+	}
 	ask := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice which version shipped?"}, 201)["id"].(string)
-	if text := s.mustCall("reply", map[string]any{"message_id": ask, "text": "2.3.1"}); !strings.Contains(text, "@bob asked this and was not tagged") {
-		t.Fatalf("untagged reply: %s", text)
+	for _, untagged := range []string{"2.3.1", "ask `@bob` later", "```\n@bob\n```", "@bobby 2.3.1"} {
+		text, isErr := s.call("reply", map[string]any{"message_id": ask, "text": untagged})
+		if !isErr || !strings.Contains(text, "Add @bob to the text") {
+			t.Fatalf("untagged reply %q: %v %s", untagged, isErr, text)
+		}
 	}
-	if text := s.mustCall("reply", map[string]any{"message_id": ask, "text": "@bob 2.3.1"}); strings.Contains(text, "asked this") {
-		t.Fatalf("tagged reply still nags: %s", text)
+	if n := threadLen(ask); n != 1 {
+		t.Fatalf("a refused reply posted: %d messages", n)
 	}
+	if text := s.mustCall("reply", map[string]any{"message_id": ask, "text": "@bob 2.3.1"}); !strings.Contains(text, "Tagged: @bob") {
+		t.Fatalf("tagged reply: %s", text)
+	}
+
+	// at an @ the longest handle wins, as on the server: "@bob smith" tags bob
+	// smith, so it does not answer bob
+	other := &testClient{t: t, base: srv.URL}
+	other.must("POST", "/api/v1/rooms/join", map[string]any{"invite": secret, "name": "bob smith"}, 201)
+	text, isErr := s.call("reply", map[string]any{"message_id": ask, "text": "@bob smith can you take this?"})
+	if !isErr || !strings.Contains(text, "Add @bob to the text") {
+		t.Fatalf("an overlapping longer handle passed as bob: %v %s", isErr, text)
+	}
+
+	// not an ask to you: a remark by bob, or your own note, needs no tag
+	remark := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "deploy went fine"}, 201)["id"].(string)
+	s.mustCall("reply", map[string]any{"message_id": remark, "text": "nice"})
+	own := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my note"}, 201)["id"].(string)
+	s.mustCall("reply", map[string]any{"message_id": own, "text": "more"})
+
 	// bob asked in a private channel and left: the tag is there but misses, so
-	// the warning stands and there is no advice to post the same tag again
+	// the reply posts and the membership warning says why it reaches nobody
 	priv := alice.must("POST", "/api/v1/channels", map[string]any{"name": "inner", "private": true}, 201)["id"].(string)
 	alice.must("POST", "/api/v1/channels/"+priv+"/members", map[string]any{"participant": "bob"}, 200)
 	privAsk := bob.must("POST", "/api/v1/channels/"+priv+"/messages", map[string]any{"body": "@alice status?"}, 201)["id"].(string)
 	bob.must("POST", "/api/v1/channels/"+priv+"/leave", nil, 200)
-	text := s.mustCall("reply", map[string]any{"message_id": privAsk, "text": "@bob done"})
-	if strings.Contains(text, "asked this") || !strings.Contains(text, "Note: @bob is not a member of private #inner") {
+	text = s.mustCall("reply", map[string]any{"message_id": privAsk, "text": "@bob done"})
+	if !strings.Contains(text, "Note: @bob is not a member of private #inner") {
 		t.Fatalf("reply to a departed private asker: %s", text)
-	}
-	own := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my note"}, 201)["id"].(string)
-	if text := s.mustCall("reply", map[string]any{"message_id": own, "text": "more"}); strings.Contains(text, "asked this") {
-		t.Fatalf("a reply to your own message names you: %s", text)
 	}
 }
 
