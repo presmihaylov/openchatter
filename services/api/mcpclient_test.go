@@ -364,8 +364,9 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 	run("cursor", "--env", env)
 	var cur struct {
 		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
+			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+			Env     map[string]string `json:"env"`
 		} `json:"mcpServers"`
 	}
 	raw, _ := os.ReadFile(filepath.Join(home, ".cursor", "mcp.json"))
@@ -373,13 +374,24 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	oc := cur.MCPServers["openchatter"]
-	if _, kept := cur.MCPServers["other"]; !kept || oc.Command != "node" || len(oc.Args) != 3 || oc.Args[2] != env {
+	if _, kept := cur.MCPServers["other"]; !kept || oc.Command != "node" || len(oc.Args) != 3 || oc.Args[2] != env || oc.Env != nil {
 		t.Fatalf("cursor config: %s", raw)
 	}
 	// the registered command really serves the tools
 	s := startMCPCommand(t, oc.Command, oc.Args...)
 	if text := s.mustCall("whoami", nil); !strings.Contains(text, "@alice") {
 		t.Fatalf("whoami via the cursor config: %s", text)
+	}
+
+	// without --env, Cursor gets the variable handed over by interpolation
+	run("cursor")
+	raw, _ = os.ReadFile(filepath.Join(home, ".cursor", "mcp.json"))
+	cur.MCPServers = nil
+	if err := json.Unmarshal(raw, &cur); err != nil {
+		t.Fatal(err)
+	}
+	if oc = cur.MCPServers["openchatter"]; len(oc.Args) != 1 || oc.Env["OPENCHATTER_ENV"] != "${env:OPENCHATTER_ENV}" {
+		t.Fatalf("cursor config without --env: %s", raw)
 	}
 }
 
@@ -492,5 +504,34 @@ func TestMCPTagAddsMemberToPublicChannel(t *testing.T) {
 	text = s.mustCall("post_message", map[string]any{"channel": "secret", "text": "@bob psst"})
 	if strings.Contains(text, "Tagged: @bob") || !strings.Contains(text, "Note: @bob is not a member of private #secret") {
 		t.Fatalf("private post_message: %s", text)
+	}
+}
+
+// An untagged reply to an agent's ask reaches nobody, so the result names the
+// asker and says how to wake them; a tagged one, or an answer to a human, does not.
+func TestMCPUntaggedReplyNamesTheAsker(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"))
+	ask := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice which version shipped?"}, 201)["id"].(string)
+	if text := s.mustCall("reply", map[string]any{"message_id": ask, "text": "2.3.1"}); !strings.Contains(text, "@bob asked this and was not tagged") {
+		t.Fatalf("untagged reply: %s", text)
+	}
+	if text := s.mustCall("reply", map[string]any{"message_id": ask, "text": "@bob 2.3.1"}); strings.Contains(text, "asked this") {
+		t.Fatalf("tagged reply still nags: %s", text)
+	}
+	// bob asked in a private channel and left: the tag is there but misses, so
+	// the warning stands and there is no advice to post the same tag again
+	priv := alice.must("POST", "/api/v1/channels", map[string]any{"name": "inner", "private": true}, 201)["id"].(string)
+	alice.must("POST", "/api/v1/channels/"+priv+"/members", map[string]any{"participant": "bob"}, 200)
+	privAsk := bob.must("POST", "/api/v1/channels/"+priv+"/messages", map[string]any{"body": "@alice status?"}, 201)["id"].(string)
+	bob.must("POST", "/api/v1/channels/"+priv+"/leave", nil, 200)
+	text := s.mustCall("reply", map[string]any{"message_id": privAsk, "text": "@bob done"})
+	if strings.Contains(text, "asked this") || !strings.Contains(text, "Note: @bob is not a member of private #inner") {
+		t.Fatalf("reply to a departed private asker: %s", text)
+	}
+	own := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "my note"}, 201)["id"].(string)
+	if text := s.mustCall("reply", map[string]any{"message_id": own, "text": "more"}); strings.Contains(text, "asked this") {
+		t.Fatalf("a reply to your own message names you: %s", text)
 	}
 }

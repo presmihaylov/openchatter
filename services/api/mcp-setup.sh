@@ -47,11 +47,15 @@ case "$HARNESS" in
     ;;
   cursor)
     F="$HOME/.cursor/mcp.json"; mkdir -p "$HOME/.cursor"; backup "$F"
-    F="$F" ARGS="$ARGS_JSON" python3 - <<'PY'
+    F="$F" ARGS="$ARGS_JSON" WITH_ENV="${ENVFILE:+1}" python3 - <<'PY'
 import json, os
 f = os.environ["F"]
 cfg = json.load(open(f)) if os.path.exists(f) and os.path.getsize(f) else {}
-cfg.setdefault("mcpServers", {})["openchatter"] = {"command": "node", "args": json.loads(os.environ["ARGS"])}
+entry = {"command": "node", "args": json.loads(os.environ["ARGS"])}
+# Cursor starts MCP servers without the launch env; it interpolates ${env:...} instead
+if not os.environ.get("WITH_ENV"):
+    entry["env"] = {"OPENCHATTER_ENV": "${env:OPENCHATTER_ENV}"}
+cfg.setdefault("mcpServers", {})["openchatter"] = entry
 json.dump(cfg, open(f + ".tmp", "w"), indent=2)
 os.replace(f + ".tmp", f)
 PY
