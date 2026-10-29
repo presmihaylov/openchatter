@@ -139,10 +139,9 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, p mod
 		return
 	}
 
-	// tagging a room member who is not in this channel adds them when the channel
-	// is public, so the mention reaches them; a private channel never opens by a
-	// tag, and the sender learns the tag went nowhere
-	var warnings, added []string
+	// tagged room members outside the channel: the store adds them to a public
+	// channel with the message, and a private channel warns instead
+	var outsiders []models.Member
 	if len(names) > 0 {
 		inChannel, err := s.channelMemberSet(r, p.RoomID, ch.ID)
 		if err != nil {
@@ -150,22 +149,13 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, p mod
 			return
 		}
 		for _, n := range names {
-			if inChannel[byName[n]] {
-				continue
+			if !inChannel[byName[n]] {
+				outsiders = append(outsiders, models.Member{ID: byName[n], Name: n})
 			}
-			if ch.Private {
-				warnings = append(warnings, "@"+n+" is not a member of private #"+ch.Name+" and will not receive this message; a member can add them first")
-				continue
-			}
-			if _, err := s.store.JoinChannel(r.Context(), p.RoomID, ch.ID, byName[n], ch.Name, p.ID, p.Name); err != nil {
-				writeStoreErr(w, err)
-				return
-			}
-			added = append(added, n)
 		}
 	}
 
-	msg, err := s.store.CreateMessage(r.Context(), models.CreateMessageParams{
+	res, err := s.store.PostMessage(r.Context(), models.CreateMessageParams{
 		RoomID:        p.RoomID,
 		ChannelID:     ch.ID,
 		ThreadRootID:  req.ThreadRootID,
@@ -174,12 +164,20 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, p mod
 		IsBroadcast:   broadcast,
 		AttachmentIDs: req.AttachmentIDs,
 		MentionIDs:    mentionIDs,
+		Outsiders:     outsiders,
+		ActorName:     p.Name,
 	})
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, postMessageResp{Message: msg, Warnings: warnings, AddedMembers: added})
+	var warnings []string
+	if res.Private {
+		for _, o := range outsiders {
+			warnings = append(warnings, "@"+o.Name+" is not a member of private #"+ch.Name+" and will not receive this message; a member can add them first")
+		}
+	}
+	writeJSON(w, http.StatusCreated, postMessageResp{Message: res.Message, Warnings: warnings, AddedMembers: res.Added})
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request, p models.Participant) {

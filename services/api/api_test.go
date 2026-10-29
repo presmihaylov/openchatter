@@ -2578,6 +2578,23 @@ func TestMentionValidation(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(pending), added["id"].(string)) {
 		t.Fatalf("the tag did not reach bob: %v", pending)
 	}
+	// a rejected send adds nobody: the join commits with the message or not at all
+	pub2 := alice.must("POST", "/api/v1/channels", map[string]any{"name": "alice-public-2"}, 201)
+	alice.must("POST", "/api/v1/channels/"+pub2["id"].(string)+"/messages", map[string]any{
+		"body": "@bob see file", "attachment_ids": []string{"00000000-0000-4000-8000-000000000001"}}, 404)
+	scoped2 := alice.must("GET", "/api/v1/members?channel="+pub2["id"].(string), nil, 200)
+	for _, m := range scoped2["members"].([]any) {
+		if mm := m.(map[string]any); mm["handle"] == "bob" && mm["in_channel"] == true {
+			t.Fatal("a rejected send added bob to the channel")
+		}
+	}
+	if hist := alice.must("GET", "/api/v1/channels/"+pub2["id"].(string)+"/messages", nil, 200)["messages"].([]any); len(hist) != 0 {
+		for _, h := range hist {
+			if strings.Contains(h.(map[string]any)["body"].(string), "added") {
+				t.Fatalf("a rejected send left a join entry: %v", hist)
+			}
+		}
+	}
 	again := alice.must("POST", "/api/v1/channels/"+pub["id"].(string)+"/messages", map[string]any{"body": "@bob again"}, 201)
 	if again["added_members"] != nil {
 		t.Fatalf("a member is not added twice: %v", again)

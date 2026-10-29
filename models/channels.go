@@ -106,8 +106,18 @@ func (s *Store) setMembership(ctx context.Context, roomID, channelID, participan
 	if err := lockRoomEvents(ctx, tx, roomID); err != nil {
 		return false, err
 	}
+	changed, err := setMembershipTx(ctx, tx, roomID, channelID, participantID, name, actorID, actorName, join)
+	if err != nil {
+		return false, err
+	}
+	return changed, tx.Commit(ctx)
+}
 
+// setMembershipTx is setMembership inside a caller's transaction, which must
+// hold the room advisory lock. It reports whether membership changed.
+func setMembershipTx(ctx context.Context, tx pgx.Tx, roomID, channelID, participantID, name, actorID, actorName string, join bool) (bool, error) {
 	var tag pgconn.CommandTag
+	var err error
 	if join {
 		tag, err = tx.Exec(ctx,
 			`INSERT INTO channel_members (channel_id, participant_id) VALUES ($1, $2)
@@ -121,7 +131,7 @@ func (s *Store) setMembership(ctx context.Context, roomID, channelID, participan
 		return false, err
 	}
 	if tag.RowsAffected() == 0 {
-		return false, tx.Commit(ctx) // no-op, nothing to announce
+		return false, nil // no-op, nothing to announce
 	}
 
 	typ := "channel.member_joined"
@@ -150,7 +160,7 @@ func (s *Store) setMembership(ctx context.Context, roomID, channelID, participan
 	if err := systemEntryTx(ctx, tx, roomID, channelID, participantID, body); err != nil {
 		return false, err
 	}
-	return true, tx.Commit(ctx)
+	return true, nil
 }
 
 func (s *Store) ListChannels(ctx context.Context, roomID string) ([]Channel, error) {
