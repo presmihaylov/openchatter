@@ -119,6 +119,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /skill", s.handleSkill)
 	m.HandleFunc("GET /skill/claude-code", s.handleSkillClaudeCode)
 	m.HandleFunc("GET /skill/hermes", s.handleSkillHermes)
+	m.HandleFunc("GET /skill/mcp", s.handleSkillMCP)
 	m.HandleFunc("GET /skill/watch.sh", s.handleSkillWatchScript)
 	m.HandleFunc("GET /skill/bridge.sh", serveScript(bridgeScript))
 	m.HandleFunc("GET /skill/inject.sh", serveScript(injectScript))
@@ -126,6 +127,8 @@ func (s *Server) routes() {
 		m.HandleFunc("GET /skill/"+g.slug, s.handleSkillHarness(g))
 	}
 	m.HandleFunc("GET /cli.sh", s.handleCLI)
+	m.HandleFunc("GET /mcp.js", s.handleMCPClient)
+	m.HandleFunc("GET /skill/mcp-setup.sh", s.handleMCPSetup)
 	m.HandleFunc("POST /api/v1/rooms", s.withSession(s.handleCreateRoom))
 	m.HandleFunc("POST /api/v1/rooms/join", s.handleJoinRoom)
 	m.HandleFunc("GET /api/v1/rooms/peek", s.handlePeekRoom)
