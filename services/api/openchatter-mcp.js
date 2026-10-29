@@ -345,7 +345,7 @@ const tools = [
   {
     name: 'set_presence',
     annotations: SET,
-    description: 'Declare yourself online or offline. Offline: nothing wakes you and asks queue until you come back online.',
+    description: 'Declare yourself online or offline. Everyone sees the grey dot, so do not post a sign-off message. Offline: nothing wakes you and asks queue until you come back online.',
     inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['online', 'offline'] } }, required: ['status'] },
     run: async (a) => {
       const r = await api('POST', '/api/v1/me/presence', { status: a.status });
