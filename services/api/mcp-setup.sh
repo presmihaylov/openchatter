@@ -1,11 +1,7 @@
 #!/bin/bash
-# Install the OpenChatter MCP server and register it with one harness.
-# Usage: mcp-setup.sh <claude|cursor|codex> [--env FILE] [--scope user|local]
-#   --env FILE   bake this identity into the config (one agent per config).
-#                Without it the server reads $OPENCHATTER_ENV at launch, so one
-#                global config serves every agent that exports its own.
-#   --scope      claude only: user (default, every project) or local (this dir).
-# Every config it edits is copied to <file>.bak-<UTC stamp> first. Re-running is safe.
+# Register OpenChatter with claude, cursor, or codex.
+# --env fixes the identity; otherwise OPENCHATTER_ENV selects it at launch.
+# Back up each config before editing it.
 set -euo pipefail
 SERVER="{{SERVER}}"
 DIR="$HOME/.openchatter"
@@ -63,23 +59,45 @@ PY
     ;;
   codex)
     F="${CODEX_HOME:-$HOME/.codex}/config.toml"; mkdir -p "$(dirname "$F")"; touch "$F"; backup "$F"
-    # drop an earlier block of ours, then append the current one
-    F="$F" python3 - <<'PY'
-import os, re
+    F="$F" ARGS="$ARGS_JSON" WITH_ENV="${ENVFILE:+1}" python3 - <<'PY'
+import os, re, sys
 f = os.environ["F"]
-s = open(f).read()
-s = re.sub(r"(?ms)^\[mcp_servers\.openchatter\]\n.*?(?=^\[(?!mcp_servers\.openchatter[\].])|\Z)", "", s)
-open(f, "w").write(s.rstrip("\n") + ("\n" if s.strip() else ""))
+lines = open(f).read().splitlines(keepends=True)
+# a table header, however it is quoted, spaced or commented
+header = re.compile(r"""^\s*\[\[?\s*(.*?)\s*\]\]?\s*(#.*)?$""")
+def ours(name):
+    parts = [p.strip().strip("\"'") for p in re.split(r"\.(?=(?:[^\"']*[\"'][^\"']*[\"'])*[^\"']*$)", name)]
+    return parts[:2] == ["mcp_servers", "openchatter"]
+kept, skipping = [], False
+for line in lines:
+    m = header.match(line)
+    if m:
+        skipping = ours(m.group(1))
+    if not skipping:
+        kept.append(line)
+body = "".join(kept).rstrip("\n")
+block = '[mcp_servers.openchatter]\ncommand = "node"\nargs = %s\n' % os.environ["ARGS"]
+if not os.environ.get("WITH_ENV"):
+    block += 'env_vars = ["OPENCHATTER_ENV"]\n'
+# room tools are the agent's voice: a prompt per post would stall every turn
+block += 'default_tools_approval_mode = "approve"\n'
+out = (body + "\n\n" if body else "") + block
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+if tomllib:
+    try:
+        cfg = tomllib.loads(out)
+    except tomllib.TOMLDecodeError as e:
+        sys.exit("mcp-setup: %s would not parse after the edit (%s); left it unchanged, fix it by hand" % (f, e))
+    if cfg["mcp_servers"]["openchatter"].get("command") != "node":
+        sys.exit("mcp-setup: %s defines openchatter another way; left it unchanged, fix it by hand" % f)
+elif re.search(r"(?m)^\s*(mcp_servers\.)?[\"']?openchatter[\"']?\s*=", body):
+    sys.exit("mcp-setup: %s defines openchatter inline; left it unchanged, fix it by hand" % f)
+open(f + ".tmp", "w").write(out)
+os.replace(f + ".tmp", f)
 PY
-    {
-      echo ""
-      echo "[mcp_servers.openchatter]"
-      echo "command = \"node\""
-      echo "args = $ARGS_JSON"
-      [ -z "$ENVFILE" ] && echo 'env_vars = ["OPENCHATTER_ENV"]'
-      # room tools are the agent's voice: a prompt per post would stall every turn
-      echo 'default_tools_approval_mode = "approve"'
-    } >> "$F"
     echo "registered openchatter in $F"
     ;;
 esac

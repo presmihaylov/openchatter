@@ -4,6 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -319,7 +323,8 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	old := "model = \"x\"\n\n[mcp_servers.openchatter]\ncommand = \"stale\"\n[mcp_servers.openchatter.tools.reply]\napproval_mode = \"prompt\"\n\n[profiles.a]\nmodel = \"y\"\n"
+	// a commented header and a quoted subtable are still ours to replace
+	old := "model = \"x\"\n\n[mcp_servers.openchatter] # room tools\ncommand = \"stale\"\n[mcp_servers.\"openchatter\".tools.reply]\napproval_mode = \"prompt\"\n\n[profiles.a]\nmodel = \"y\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -335,13 +340,19 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 	if out := run("codex", "--env", env); !strings.Contains(out, "ok: @alice") {
 		t.Fatalf("codex setup did not prove the identity:\n%s", out)
 	}
+	run("codex", "--env", env) // a re-run replaces, never duplicates
 	toml, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
-	if strings.Contains(string(toml), "stale") || strings.Count(string(toml), "[mcp_servers.openchatter]") != 1 ||
+	if strings.Contains(string(toml), "stale") || strings.Contains(string(toml), "approval_mode = \"prompt\"") ||
+		strings.Count(string(toml), "[mcp_servers.openchatter]") != 1 ||
 		!strings.Contains(string(toml), `default_tools_approval_mode = "approve"`) || !strings.Contains(string(toml), "[profiles.a]") {
 		t.Fatalf("codex config:\n%s", toml)
 	}
-	if baks, _ := filepath.Glob(filepath.Join(home, ".codex", "config.toml.bak-*")); len(baks) != 1 {
-		t.Fatalf("want one backup, got %v", baks)
+	if baks, _ := filepath.Glob(filepath.Join(home, ".codex", "config.toml.bak-*")); len(baks) == 0 {
+		t.Fatal("codex config was edited without a backup")
+	}
+	if out, err := exec.Command("python3", "-c", "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb'))",
+		filepath.Join(home, ".codex", "config.toml")).CombinedOutput(); err != nil && !strings.Contains(string(out), "No module named") {
+		t.Fatalf("codex config does not parse: %s", out)
 	}
 
 	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
@@ -369,5 +380,51 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 	s := startMCPCommand(t, oc.Command, oc.Args...)
 	if text := s.mustCall("whoami", nil); !strings.Contains(text, "@alice") {
 		t.Fatalf("whoami via the cursor config: %s", text)
+	}
+}
+
+// Every id lands in a URL path, so anything but a bare uuid is refused before
+// a request: "<uuid>?" would turn DELETE .../reactions/x into DELETE the message.
+func TestMCPRefusesIDsThatRewriteThePath(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"))
+	own := alice.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "keep me"}, 201)["id"].(string)
+	for _, bad := range []string{own + "?", own + "#", own + "/../../channels/general", "../" + own, own + "%3F"} {
+		for _, tool := range []string{"unreact", "react", "ack", "reply", "read_thread"} {
+			text, isErr := s.call(tool, map[string]any{"message_id": bad, "emoji": "👀", "text": "x"})
+			if !isErr || !strings.Contains(text, "message uuid") {
+				t.Errorf("%s(%q) was not refused: %s", tool, bad, text)
+			}
+		}
+	}
+	if msg := alice.must("GET", "/api/v1/messages/"+own, nil, 200); msg["body"] != "keep me" {
+		t.Fatalf("the message changed: %v", msg)
+	}
+}
+
+// Once the POST succeeds the call reports success, even if the channel-name
+// lookup after it fails: an error there would make the agent post again.
+func TestMCPReplySucceedsWhenTheLookupAfterItFails(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, alice, bob := setupRoom(t, srv.URL)
+	root := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "@alice status?"}, 201)["id"].(string)
+	target, _ := url.Parse(srv.URL)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/channels" {
+			http.Error(w, `{"error":"boom"}`, http.StatusBadGateway)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+front.URL+"\nTOKEN="+alice.token+"\n"))
+	text := s.mustCall("reply", map[string]any{"message_id": root, "text": "all green"})
+	if !strings.Contains(text, "message_id: ") || !strings.Contains(text, "thread: "+root) {
+		t.Fatalf("reply after a failed lookup: %s", text)
+	}
+	if n := len(alice.must("GET", "/api/v1/threads/"+root, nil, 200)["messages"].([]any)); n != 2 {
+		t.Fatalf("want the root and one reply, got %d messages", n)
 	}
 }

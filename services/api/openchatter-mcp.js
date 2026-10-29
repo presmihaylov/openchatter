@@ -107,15 +107,22 @@ async function resolveChannel(ref) {
   const names = (await channels()).map((c) => '#' + c.name).join(', ');
   throw new RoomError('no channel "' + want + '" you are a member of. Your channels: ' + names, 404);
 }
+// never throws: it runs after a write, and a failed lookup must not turn a sent message into an error
 async function channelName(id) {
-  const c = (await channels()).find((x) => x.id === id);
-  return c ? '#' + c.name : id;
+  try {
+    const c = (await channels()).find((x) => x.id === id);
+    return c ? '#' + c.name : id;
+  } catch (_) { return id; }
 }
-async function messageById(id) {
+// every id goes into a URL path, so only a bare uuid passes: "?", "#" or "../" could aim the call elsewhere
+function messageId(id) {
   const ref = String(id || '').trim();
-  if (!/^[0-9a-f-]{36}$/i.test(ref)) throw new RoomError('message_id must be a message uuid like "1a2b3c4d-...", the id shown next to each message', 400);
-  return api('GET', '/api/v1/messages/' + ref);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
+    throw new RoomError('message_id must be a message uuid like "1a2b3c4d-...", the id shown next to each message', 400);
+  }
+  return ref.toLowerCase();
 }
+async function messageById(id) { return api('GET', '/api/v1/messages/' + messageId(id)); }
 
 // ---------- formatting ----------
 function when(ts) { return ts ? String(ts).replace('T', ' ').slice(0, 16) + 'Z' : ''; }
@@ -264,9 +271,9 @@ const tools = [
       emoji: { type: 'string', description: 'One emoji (👀 ✅ 👍 🎉) or a :shortcode: like :eyes:.' },
     }, required: ['message_id', 'emoji'] },
     run: async (a) => {
-      await messageById(a.message_id);
-      await api('POST', '/api/v1/messages/' + a.message_id + '/reactions', { emoji: a.emoji });
-      return ok('Reacted ' + a.emoji + ' on ' + a.message_id + '.');
+      const mid = messageId(a.message_id);
+      await api('POST', '/api/v1/messages/' + mid + '/reactions', { emoji: a.emoji });
+      return ok('Reacted ' + a.emoji + ' on ' + mid + '.');
     },
   },
   {
@@ -277,8 +284,9 @@ const tools = [
       message_id: { type: 'string' }, emoji: { type: 'string', description: 'The emoji to remove.' },
     }, required: ['message_id', 'emoji'] },
     run: async (a) => {
-      await api('DELETE', '/api/v1/messages/' + a.message_id + '/reactions/' + encodeURIComponent(a.emoji));
-      return ok('Removed ' + a.emoji + ' from ' + a.message_id + '.');
+      const mid = messageId(a.message_id);
+      await api('DELETE', '/api/v1/messages/' + mid + '/reactions/' + encodeURIComponent(a.emoji));
+      return ok('Removed ' + a.emoji + ' from ' + mid + '.');
     },
   },
   {
@@ -287,8 +295,9 @@ const tools = [
     description: 'Acknowledge an ask addressed to you without an emoji (for a broadcast or an untagged thread reply). Never send "on it" as a message; ack or react instead.',
     inputSchema: { type: 'object', properties: { message_id: { type: 'string' } }, required: ['message_id'] },
     run: async (a) => {
-      await api('POST', '/api/v1/messages/' + a.message_id + '/ack');
-      return ok('Acked ' + a.message_id + '. The author can see it; nobody was woken.');
+      const mid = messageId(a.message_id);
+      await api('POST', '/api/v1/messages/' + mid + '/ack');
+      return ok('Acked ' + mid + '. The author can see it; nobody was woken.');
     },
   },
   {
@@ -367,6 +376,26 @@ const tools = [
 
 // ---------- MCP over stdio ----------
 function send(msg) { process.stdout.write(JSON.stringify(msg) + '\n'); }
+
+function missingArg(tool, args) {
+  const required = tool.inputSchema.required || [];
+  const k = required.find((r) => args[r] === undefined || args[r] === null || String(args[r]).trim() === '');
+  return k ? 'Missing "' + k + '". ' + tool.name + ' needs: ' + required.join(', ') + '.' : '';
+}
+async function callTool(params) {
+  const name = params && params.name;
+  const tool = tools.find((t) => t.name === name);
+  if (!tool) return fail('Unknown tool "' + name + '". Tools: ' + tools.map((t) => t.name).join(', '));
+  if (!config) return fail(configError);
+  const args = (params && params.arguments) || {};
+  const missing = missingArg(tool, args);
+  if (missing) return fail(missing);
+  try {
+    return await tool.run(args);
+  } catch (e) {
+    return fail(e instanceof RoomError ? e.message : 'Unexpected error: ' + e.message);
+  }
+}
 async function handle(msg) {
   const { id, method, params } = msg;
   if (id === undefined || id === null) return; // a notification needs no answer
@@ -383,22 +412,7 @@ async function handle(msg) {
     if (method === 'tools/list') {
       return send({ jsonrpc: '2.0', id, result: { tools: tools.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })) } });
     }
-    if (method === 'tools/call') {
-      const tool = tools.find((t) => t.name === (params && params.name));
-      if (!tool) return send({ jsonrpc: '2.0', id, result: fail('Unknown tool "' + (params && params.name) + '". Tools: ' + tools.map((t) => t.name).join(', ')) });
-      if (!config) return send({ jsonrpc: '2.0', id, result: fail(configError) });
-      const args = (params && params.arguments) || {};
-      for (const k of tool.inputSchema.required || []) {
-        if (args[k] === undefined || args[k] === null || String(args[k]).trim() === '') {
-          return send({ jsonrpc: '2.0', id, result: fail('Missing "' + k + '". ' + tool.name + ' needs: ' + tool.inputSchema.required.join(', ') + '.') });
-        }
-      }
-      try {
-        return send({ jsonrpc: '2.0', id, result: await tool.run(args) });
-      } catch (e) {
-        return send({ jsonrpc: '2.0', id, result: fail(e instanceof RoomError ? e.message : 'Unexpected error: ' + e.message) });
-      }
-    }
+    if (method === 'tools/call') return send({ jsonrpc: '2.0', id, result: await callTool(params) });
     return send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found: ' + method } });
   } catch (e) {
     return send({ jsonrpc: '2.0', id, error: { code: -32603, message: e.message } });
