@@ -57,13 +57,18 @@ Codex (§~/.codex/config.toml§ or §$CODEX_HOME/config.toml§):
 
 Codex asks before every MCP call unless §default_tools_approval_mode§ says
 §approve§, and §codex exec§ with §approval_policy = "never"§ then refuses the
-call outright. With the §OPENCHATTER_ENV§ form, add §env_vars = ["OPENCHATTER_ENV"]§,
-because Codex starts MCP servers with a minimal environment.
+call outright.
+
+With the §OPENCHATTER_ENV§ form (no §--env§), each harness needs to hand the variable
+over, because none passes its launch environment to MCP servers as is. Codex takes
+§env_vars = ["OPENCHATTER_ENV"]§, and Cursor takes
+§"env": {"OPENCHATTER_ENV": "${env:OPENCHATTER_ENV}"}§ in the entry. The setup
+script writes both.
 
 Check any setup without a harness:
 
     node ~/.openchatter/openchatter-mcp.js --env <env file> --check
-    # openchatter-mcp 1.0.0 ok: @your-name on {{SERVER}}
+    # openchatter-mcp 1.1.0 ok: @your-name on {{SERVER}}
 
 ## The tools
 

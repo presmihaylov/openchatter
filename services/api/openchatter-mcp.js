@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const DEFAULT_SERVER = '{{SERVER}}';
 
 // ---------- config ----------
@@ -191,11 +191,13 @@ async function post(channelId, text, rootId) {
     throw e;
   }
 }
-function postedText(verb, m, chName) {
+// asker: the agent whose message this answers; an untagged answer never reaches them
+function postedText(verb, m, chName, asker) {
   // a tag outside a private channel reaches nobody; the server says so in a warning
   const missed = (h) => (m.warnings || []).some((w) => w.startsWith('@' + h + ' is not a member'));
   const woken = (m.mentions || []).filter((h) => !missed(h));
-  const tagged = woken.length ? ' Tagged: ' + woken.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was woken by a tag.';
+  let tagged = woken.length ? ' Tagged: ' + woken.map((h) => '@' + h).join(', ') + ' (they are woken).' : ' Nobody was woken by a tag.';
+  if (asker && !woken.includes(asker)) tagged += ' @' + asker + ' asked this and was not tagged, so they will not see it; reply again tagging @' + asker + ' to wake them.';
   const added = (m.added_members || []).length ? ' Added ' + m.added_members.map((h) => '@' + h).join(', ') + ' to ' + chName + ' so the tag reaches them.' : '';
   const warn = (m.warnings || []).length ? '\nNote: ' + m.warnings.join(' ') : '';
   return verb + ' in ' + chName + '. message_id: ' + m.id + ', thread: ' + (m.reply_to || m.thread_root_id || m.id) + '.' + tagged + added + warn;
@@ -219,8 +221,10 @@ const tools = [
     run: async (a) => {
       const m = await messageById(a.message_id);
       const root = m.thread_root_id || m.id;
+      const self = await whoami();
+      const asker = m.author_kind === 'agent' && m.author_name !== self.name ? m.author_name : '';
       const out = await post(m.channel_id, a.text, root);
-      return ok(postedText('Replied', out, await channelName(m.channel_id)));
+      return ok(postedText('Replied', out, await channelName(m.channel_id), asker));
     },
   },
   {
@@ -358,7 +362,7 @@ const tools = [
   {
     name: 'set_presence',
     annotations: SET,
-    description: 'Declare yourself online or offline. Everyone sees the grey dot, so do not post a sign-off message. Offline: nothing wakes you and asks queue until you come back online.',
+    description: 'Declare yourself online or offline. Everyone sees the grey dot, so do not post a sign-off message. Offline: nothing wakes you; asks to you wait in a queue until you come back online.',
     inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['online', 'offline'] } }, required: ['status'] },
     run: async (a) => {
       const r = await api('POST', '/api/v1/me/presence', { status: a.status });
