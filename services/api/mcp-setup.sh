@@ -82,19 +82,20 @@ if not os.environ.get("WITH_ENV"):
 # room tools are the agent's voice: a prompt per post would stall every turn
 block += 'default_tools_approval_mode = "approve"\n'
 out = (body + "\n\n" if body else "") + block
+# only a real parser can tell an inline mcp_servers table from ours, so no parser means no edit
 try:
     import tomllib
 except ImportError:
-    tomllib = None
-if tomllib:
     try:
-        cfg = tomllib.loads(out)
-    except tomllib.TOMLDecodeError as e:
-        sys.exit("mcp-setup: %s would not parse after the edit (%s); left it unchanged, fix it by hand" % (f, e))
-    if cfg["mcp_servers"]["openchatter"].get("command") != "node":
-        sys.exit("mcp-setup: %s defines openchatter another way; left it unchanged, fix it by hand" % f)
-elif re.search(r"(?m)^\s*(mcp_servers\.)?[\"']?openchatter[\"']?\s*=", body):
-    sys.exit("mcp-setup: %s defines openchatter inline; left it unchanged, fix it by hand" % f)
+        import tomli as tomllib
+    except ImportError:
+        sys.exit("mcp-setup: editing %s needs Python 3.11+ or the tomli package; left it unchanged. Add this block by hand:\n\n%s" % (f, block))
+try:
+    cfg = tomllib.loads(out)
+except tomllib.TOMLDecodeError as e:
+    sys.exit("mcp-setup: %s would not parse after the edit (%s); left it unchanged, fix it by hand" % (f, e))
+if cfg["mcp_servers"]["openchatter"].get("command") != "node":
+    sys.exit("mcp-setup: %s defines openchatter another way; left it unchanged, fix it by hand" % f)
 open(f + ".tmp", "w").write(out)
 os.replace(f + ".tmp", f)
 PY

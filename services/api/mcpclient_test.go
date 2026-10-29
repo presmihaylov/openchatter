@@ -428,3 +428,51 @@ func TestMCPReplySucceedsWhenTheLookupAfterItFails(t *testing.T) {
 		t.Fatalf("want the root and one reply, got %d messages", n)
 	}
 }
+
+// A Codex config the script cannot safely edit is left byte for byte as it was:
+// an inline mcp_servers table, or a Python with no TOML parser to check the result.
+func TestMCPSetupScriptLeavesUneditableCodexConfigs(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	srv, _ := newTestServer(t)
+	_, alice, _ := setupRoom(t, srv.URL)
+	script := filepath.Join(t.TempDir(), "mcp-setup.sh")
+	body := strings.Replace(getText(t, srv.URL+"/skill/mcp-setup.sh"), `SERVER="http://public.test"`, `SERVER="`+srv.URL+`"`, 1)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n")
+	// a module that fails to import stands in for a Python without tomllib or tomli
+	noParser := t.TempDir()
+	for _, mod := range []string{"tomllib.py", "tomli.py"} {
+		if err := os.WriteFile(filepath.Join(noParser, mod), []byte("raise ImportError('hidden by the test')\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name, config, pythonPath, want string
+	}{
+		{"inline parent", "mcp_servers = { openchatter = { command = \"old\" } }\n", "", "would not parse"},
+		{"no parser", "model = \"x\"\n", noParser, "Add this block by hand"},
+	}
+	for _, c := range cases {
+		home := t.TempDir()
+		cfg := filepath.Join(home, ".codex", "config.toml")
+		if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cfg, []byte(c.config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", script, "codex", "--env", env)
+		cmd.Env = append(os.Environ(), "HOME="+home, "OPENCHATTER_ENV=", "CODEX_HOME=", "PYTHONPATH="+c.pythonPath)
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), c.want) {
+			t.Errorf("%s: want a refusal naming %q: %v\n%s", c.name, c.want, err, out)
+		}
+		if got, _ := os.ReadFile(cfg); string(got) != c.config {
+			t.Errorf("%s: the config changed:\n%s", c.name, got)
+		}
+	}
+}
