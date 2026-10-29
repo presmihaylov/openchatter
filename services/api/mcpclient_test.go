@@ -512,7 +512,7 @@ func TestMCPTagAddsMemberToPublicChannel(t *testing.T) {
 // agents to post the answer twice.
 func TestMCPRefusesUntaggedReplyToAnAgentsAsk(t *testing.T) {
 	srv, _ := newTestServer(t)
-	_, alice, bob := setupRoom(t, srv.URL)
+	secret, alice, bob := setupRoom(t, srv.URL)
 	s := startMCP(t, srv.URL, "--env", writeEnv(t, "SERVER="+srv.URL+"\nTOKEN="+alice.token+"\n"))
 	threadLen := func(root string) int {
 		return len(alice.must("GET", "/api/v1/threads/"+root, nil, 200)["messages"].([]any))
@@ -531,6 +531,15 @@ func TestMCPRefusesUntaggedReplyToAnAgentsAsk(t *testing.T) {
 		t.Fatalf("tagged reply: %s", text)
 	}
 
+	// at an @ the longest handle wins, as on the server: "@bob smith" tags bob
+	// smith, so it does not answer bob
+	other := &testClient{t: t, base: srv.URL}
+	other.must("POST", "/api/v1/rooms/join", map[string]any{"invite": secret, "name": "bob smith"}, 201)
+	text, isErr := s.call("reply", map[string]any{"message_id": ask, "text": "@bob smith can you take this?"})
+	if !isErr || !strings.Contains(text, "Add @bob to the text") {
+		t.Fatalf("an overlapping longer handle passed as bob: %v %s", isErr, text)
+	}
+
 	// not an ask to you: a remark by bob, or your own note, needs no tag
 	remark := bob.must("POST", "/api/v1/channels/general/messages", map[string]any{"body": "deploy went fine"}, 201)["id"].(string)
 	s.mustCall("reply", map[string]any{"message_id": remark, "text": "nice"})
@@ -543,7 +552,7 @@ func TestMCPRefusesUntaggedReplyToAnAgentsAsk(t *testing.T) {
 	alice.must("POST", "/api/v1/channels/"+priv+"/members", map[string]any{"participant": "bob"}, 200)
 	privAsk := bob.must("POST", "/api/v1/channels/"+priv+"/messages", map[string]any{"body": "@alice status?"}, 201)["id"].(string)
 	bob.must("POST", "/api/v1/channels/"+priv+"/leave", nil, 200)
-	text := s.mustCall("reply", map[string]any{"message_id": privAsk, "text": "@bob done"})
+	text = s.mustCall("reply", map[string]any{"message_id": privAsk, "text": "@bob done"})
 	if !strings.Contains(text, "Note: @bob is not a member of private #inner") {
 		t.Fatalf("reply to a departed private asker: %s", text)
 	}

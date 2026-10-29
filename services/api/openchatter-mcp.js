@@ -92,6 +92,7 @@ async function api(method, route, body) {
 let me = null;
 let channelsCache = null;
 async function whoami() { if (!me) me = await api('GET', '/api/v1/me'); return me; }
+async function handles() { return ((await api('GET', '/api/v1/members')).members || []).map((m) => m.handle); }
 async function channels(refresh) {
   if (!channelsCache || refresh) channelsCache = (await api('GET', '/api/v1/channels')).channels || [];
   return channelsCache;
@@ -163,11 +164,25 @@ function mentionHelp(e) {
     + '. Fix the handle and call again. To name someone who is not in the room without tagging, write it in `backticks`.';
 }
 
-// tags reports whether text tags handle the way the server reads it: outside code
-function tags(text, handle) {
+// mentionsIn mirrors pkg/mentions.Parse: code stripped, case-sensitive, and at
+// each @ the longest known handle wins ("@John Smith" tags John Smith, not John)
+function mentionsIn(text, handles) {
   const prose = text.replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ');
-  const esc = handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp('(^|[^\\w@])@' + esc + '(?![\\w-])').test(prose);
+  const hits = [];
+  for (const h of handles) {
+    const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(^|[^\\w@])(@' + esc + ')(?=$|[^\\w-])', 'g');
+    for (let m; (m = re.exec(prose)) !== null;) hits.push({ h, pos: m.index + m[1].length });
+  }
+  hits.sort((x, y) => x.pos - y.pos || y.h.length - x.h.length);
+  const names = [];
+  let lastEnd = -1;
+  for (const { h, pos } of hits) {
+    if (pos < lastEnd || names.includes(h)) continue;
+    names.push(h);
+    lastEnd = pos + 1 + h.length;
+  }
+  return names;
 }
 
 // a bare - or + at line start is a Markdown bullet, so an unfenced diff renders mangled
@@ -230,7 +245,7 @@ const tools = [
       // an agent that tagged you only hears an answer that tags it back; refusing
       // beats advising a retry, which can only add a second post
       const asked = m.author_kind === 'agent' && m.author_name !== self.name && (m.mentions || []).includes(self.name);
-      if (asked && !tags(a.text, m.author_name)) {
+      if (asked && !mentionsIn(a.text, await handles()).includes(m.author_name)) {
         throw new RoomError('Not posted: @' + m.author_name + ' asked you this and only hears a reply that tags them. Add @' + m.author_name + ' to the text and call reply again.', 400);
       }
       const out = await post(m.channel_id, a.text, root);
