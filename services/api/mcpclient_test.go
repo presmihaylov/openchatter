@@ -535,3 +535,19 @@ func TestMCPUntaggedReplyNamesTheAsker(t *testing.T) {
 		t.Fatalf("a reply to your own message names you: %s", text)
 	}
 }
+
+// Served clients must never be cached: a CDN caches .js by extension and a
+// stale copy installs the old client for hours.
+func TestServedClientsAreNotCached(t *testing.T) {
+	srv, _ := newTestServer(t)
+	for _, path := range []string{"/mcp.js", "/skill/mcp-setup.sh", "/cli.sh"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control %q, want no-store", path, got)
+		}
+	}
+}

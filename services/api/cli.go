@@ -16,6 +16,7 @@ var cliScript string
 func (s *Server) handleCLI(w http.ResponseWriter, r *http.Request) {
 	out := strings.ReplaceAll(cliScript, "{{SERVER}}", s.cfg.PublicURL)
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(out))
 }

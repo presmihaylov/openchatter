@@ -34,7 +34,8 @@ if [ -n "$PROBE" ] && [ -r "$PROBE" ]; then
     [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && printf 'header = "CF-Access-Client-Id: %s"\nheader = "CF-Access-Client-Secret: %s"\n' \
       "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" > "$CURLRC"; true )
 fi
-curl -fsSL --config "$CURLRC" "$SERVER/mcp.js" -o "$JS.tmp" && mv "$JS.tmp" "$JS"
+# the query dodges a CDN copy cached before the server said no-store
+curl -fsSL --config "$CURLRC" "$SERVER/mcp.js?v=$STAMP" -o "$JS.tmp" && mv "$JS.tmp" "$JS"
 echo "installed $JS"
 
 ARGS_JSON="[\"$JS\"${ENVFILE:+, \"--env\", \"$ENVFILE\"}]"

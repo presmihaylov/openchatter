@@ -28,6 +28,8 @@ func (s *Server) handleMCPSetup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveBaked(w http.ResponseWriter, script, contentType string) {
 	out := strings.ReplaceAll(script, "{{SERVER}}", s.cfg.PublicURL)
 	w.Header().Set("Content-Type", contentType)
+	// a CDN caches .js by extension; a stale copy would install the old client
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(out))
 }
