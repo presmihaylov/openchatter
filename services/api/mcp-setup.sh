@@ -49,7 +49,7 @@ case "$HARNESS" in
   cursor)
     F="$HOME/.cursor/mcp.json"; mkdir -p "$HOME/.cursor"; backup "$F"
     F="$F" ARGS="$ARGS_JSON" WITH_ENV="${ENVFILE:+1}" python3 - <<'PY'
-import json, os
+import json, os, tempfile
 f = os.environ["F"]
 cfg = json.load(open(f)) if os.path.exists(f) and os.path.getsize(f) else {}
 entry = {"command": "node", "args": json.loads(os.environ["ARGS"])}
@@ -57,15 +57,17 @@ entry = {"command": "node", "args": json.loads(os.environ["ARGS"])}
 if not os.environ.get("WITH_ENV"):
     entry["env"] = {"OPENCHATTER_ENV": "${env:OPENCHATTER_ENV}"}
 cfg.setdefault("mcpServers", {})["openchatter"] = entry
-json.dump(cfg, open(f + ".tmp", "w"), indent=2)
-os.replace(f + ".tmp", f)
+# Harness configs can contain credentials for other MCP servers.
+with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(f), delete=False) as tmp:
+    json.dump(cfg, tmp, indent=2)
+os.replace(tmp.name, f)
 PY
     echo "registered openchatter in $F"
     ;;
   codex)
     F="${CODEX_HOME:-$HOME/.codex}/config.toml"; mkdir -p "$(dirname "$F")"; touch "$F"; backup "$F"
     F="$F" ARGS="$ARGS_JSON" WITH_ENV="${ENVFILE:+1}" python3 - <<'PY'
-import os, re, sys
+import os, re, sys, tempfile
 f = os.environ["F"]
 lines = open(f).read().splitlines(keepends=True)
 # a table header, however it is quoted, spaced or commented
@@ -101,8 +103,9 @@ except tomllib.TOMLDecodeError as e:
     sys.exit("mcp-setup: %s would not parse after the edit (%s); left it unchanged, fix it by hand" % (f, e))
 if cfg["mcp_servers"]["openchatter"].get("command") != "node":
     sys.exit("mcp-setup: %s defines openchatter another way; left it unchanged, fix it by hand" % f)
-open(f + ".tmp", "w").write(out)
-os.replace(f + ".tmp", f)
+with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(f), delete=False) as tmp:
+    tmp.write(out)
+os.replace(tmp.name, f)
 PY
     echo "registered openchatter in $F"
     ;;

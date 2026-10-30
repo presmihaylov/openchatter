@@ -325,11 +325,11 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 	}
 	// a commented header and a quoted subtable are still ours to replace
 	old := "model = \"x\"\n\n[mcp_servers.openchatter] # room tools\ncommand = \"stale\"\n[mcp_servers.\"openchatter\".tools.reply]\napproval_mode = \"prompt\"\n\n[profiles.a]\nmodel = \"y\"\n"
-	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(old), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run := func(args ...string) string {
-		cmd := exec.Command("bash", append([]string{script}, args...)...)
+		cmd := exec.Command("bash", append([]string{"-c", `umask 022; exec bash "$@"`, "mcp-setup", script}, args...)...)
 		cmd.Env = append(os.Environ(), "HOME="+home, "OPENCHATTER_ENV=", "CODEX_HOME=")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -358,10 +358,19 @@ func TestMCPSetupScriptRegistersHarnesses(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".cursor", "mcp.json"), []byte(`{"mcpServers":{"other":{"command":"x"}}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".cursor", "mcp.json"), []byte(`{"mcpServers":{"other":{"command":"x"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("cursor", "--env", env)
+	for _, config := range []string{filepath.Join(home, ".codex", "config.toml"), filepath.Join(home, ".cursor", "mcp.json")} {
+		info, err := os.Stat(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("setup exposed %s with permissions %o", config, info.Mode().Perm())
+		}
+	}
 	var cur struct {
 		MCPServers map[string]struct {
 			Command string            `json:"command"`
