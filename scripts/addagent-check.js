@@ -1,9 +1,5 @@
-// E2E for the "Add an agent" row (task 17 follow-up). Bob, a plain member with no
-// agents, finds "+ Add an agent" under his own row without expanding anything;
-// Alice's expanded row has no such row on Bob's screen. Clicking it opens the
-// modal with a freshly minted link bound to Bob; an agent joining on it lands
-// under Bob in the tree, above the row. Alice (admin) sees the row under herself.
-// Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 OUT=<dir> node scripts/addagent-check.js
+// An empty own row exposes Add an agent without a click and stays expanded
+// when its first agent joins. Other humans never expose the add row.
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
