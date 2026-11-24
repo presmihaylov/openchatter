@@ -1551,10 +1551,13 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
   const expandedSet = () => {
     try { return new Set(JSON.parse(localStorage.getItem(rosterKey()) || '[]')); } catch (e) { return new Set(); }
   };
+  const saveExpanded = (set) => {
+    try { localStorage.setItem(rosterKey(), JSON.stringify([...set])); } catch (e) { /* private mode */ }
+  };
   const toggleHuman = (id) => {
     const set = expandedSet();
     set.has(id) ? set.delete(id) : set.add(id);
-    try { localStorage.setItem(rosterKey(), JSON.stringify([...set])); } catch (e) { /* private mode */ }
+    saveExpanded(set);
     renderParticipants();
   };
 
@@ -1601,8 +1604,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     const sunk = (h, kids) => !h.online && !kids.some((a) => a.online);
     const kidsOf = (h) => agents.filter((a) => ownerOf(a) === h.id);
 
-    // your own row always expands: with no agents yet it opens on the
-    // "Add an agent" row alone, which is how a human gets their first one
+    // your own row always ends in "Add an agent". With no agents yet it stays
+    // open with no chevron: collapsed by default, a newcomer's only way to a
+    // first agent hid behind a grey 0/0
     const mine = (h) => me && me.is_human && h.id === me.id;
     const addAgentRow = () => {
       const li = document.createElement('li');
@@ -1615,7 +1619,9 @@ import { sessionToken, isAccountPage, loginURL, onSessionInvalid, backTarget, fe
     };
     const renderHuman = (h) => {
       const kids = kidsOf(h);
-      const hasKids = kids.length > 0 || mine(h);
+      // an empty own row counts as expanded, so the first agent lands in view
+      if (mine(h) && kids.length === 0 && !expanded.has(h.id)) { expanded.add(h.id); saveExpanded(expanded); }
+      const hasKids = kids.length > 0;
       const collapsed = hasKids && !expanded.has(h.id);
       const rollup = collapsed && kids.some((a) => a.online); // hidden child's green dot, surfaced
       ul.appendChild(participantLi(h, false, {

@@ -1327,6 +1327,12 @@ func TestMemberMintsOwnAgentLink(t *testing.T) {
 	if st, out := member.do("POST", "/api/v1/invites", map[string]any{}); st != 403 {
 		t.Fatalf("unbound member link: %d %v", st, out)
 	}
+	// Mia owns no agents yet: the bound link is how she gets her first one
+	for _, x := range member.must("GET", "/api/v1/participants", nil, 200)["participants"].([]any) {
+		if x.(map[string]any)["owner_id"] == mia["id"] {
+			t.Fatalf("Mia already owns an agent: %v", x)
+		}
+	}
 	out := member.must("POST", "/api/v1/invites", map[string]any{"bind_owner": true}, 201)
 	inv := out["invite"].(map[string]any)
 	if inv["owner_id"] != mia["id"] || inv["created_by"] != mia["id"] {
