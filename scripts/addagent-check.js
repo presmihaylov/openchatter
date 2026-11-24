@@ -1,9 +1,5 @@
-// E2E for the "Add an agent" row (task 17 follow-up). Bob, a plain member, expands
-// his own row and finds "+ Add an agent" at the end of his (empty) agent list;
-// Alice's expanded row has no such row on Bob's screen. Clicking it opens the
-// modal with a freshly minted link bound to Bob; an agent joining on it lands
-// under Bob in the tree, above the row. Alice (admin) sees the row under herself.
-// Run: NODE_PATH=<dir with puppeteer-core> SERVER=http://localhost:8095 OUT=<dir> node scripts/addagent-check.js
+// An empty own row exposes Add an agent without a click and stays expanded
+// when its first agent joins. Other humans never expose the add row.
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
@@ -66,7 +62,8 @@ const expand = async (page, name) => {
   assert(alice && alice.kids.includes('alicebot') && alice.addRow, 'admin has no Add an agent row: ' + JSON.stringify(t));
 
   step = '2';
-  // 2. Bob (plain member): own row has a chevron even with no agents; expanded it shows only the add row
+  // 2. Bob (plain member) with no agents: his own row needs no click, it shows
+  // the add row straight away and has no chevron to hide it behind
   const ctxB = await browser.createBrowserContext();
   const bob = await ctxB.newPage();
   await bob.setViewport({ width: 1280, height: 800 });
@@ -76,11 +73,9 @@ const expand = async (page, name) => {
   await sleep(400);
   t = await tree(bob);
   let me = t.find((h) => h.name === 'Bob Member');
-  assert(me && me.chevron === 'collapsed', 'own row without agents has no chevron: ' + JSON.stringify(t));
-  await expand(bob, 'Bob Member');
-  t = await tree(bob);
-  me = t.find((h) => h.name === 'Bob Member');
-  assert(me && me.kids.length === 0 && me.addRow, 'own expanded row lacks the add row: ' + JSON.stringify(t));
+  assert(me && me.kids.length === 0 && me.addRow, 'own row without agents hides the add row: ' + JSON.stringify(t));
+  assert(me.chevron === '', 'own row without agents has a chevron: ' + JSON.stringify(t));
+  assert(await bob.$eval('#addagent-row', (el) => el.getBoundingClientRect().height > 0), 'the add row is not visible');
   // another human's row: agents, no add row
   await expand(bob, 'Alice Admin');
   t = await tree(bob);
@@ -120,7 +115,8 @@ const expand = async (page, name) => {
   assert(clip.includes(link) && clip === text, 'clipboard lacks the instructions with the link');
 
   step = '4';
-  // 4. an agent joins on the link: it is Bob's, and it nests under him above the add row
+  // 4. an agent joins on the link: it is Bob's, and it nests under him above the
+  // add row, in view without a click (the empty row counted as expanded)
   const joined = await call(SERVER, '/api/v1/rooms/join', { method: 'POST', body: { invite: link, name: 'bobbot', description: 'Bob agent' } });
   const bobId = await bob.evaluate(() => fetch('/api/v1/me', { headers: { Authorization: 'Bearer ' + localStorage.getItem('agentchat:session'), 'X-Workspace-Slug': location.pathname.split('/')[2] } }).then((r) => r.json()).then((m) => m.id));
   assert(joined.participant.owner_id === bobId, 'joined agent owner: ' + JSON.stringify(joined.participant) + ' bob=' + bobId);
@@ -130,7 +126,7 @@ const expand = async (page, name) => {
   await sleep(300);
   t = await tree(bob);
   me = t.find((h) => h.name === 'Bob Member');
-  assert(me && me.kids.includes('bobbot') && me.addRow, 'bobbot not under Bob with the add row after: ' + JSON.stringify(t));
+  assert(me && me.kids.includes('bobbot') && me.addRow && me.chevron === 'open', 'bobbot not under Bob with the add row after: ' + JSON.stringify(t));
   await shot(bob, 'joined.png');
   // a member's unbound mint stays refused
   const bobSession = await bob.evaluate(() => localStorage.getItem('agentchat:session'));
